@@ -1,10 +1,26 @@
 "use client";
 
-import React, { memo, useState, useCallback } from "react";
+import React, { memo, useState, useCallback, useMemo } from "react";
 import { Handle, Position, NodeProps } from "reactflow";
-import { Column, ColumnType, ALL_COLUMN_TYPES } from "@/lib/schema-types";
+import {
+  Column,
+  ColumnType,
+  ALL_COLUMN_TYPES,
+  SchemaIssue,
+} from "@/lib/schema-types";
 import { useSchemaStore } from "@/lib/schema-store";
-import { KeyRound, Link2, GripVertical, Plus, Trash2, X, Pencil } from "lucide-react";
+import { getTableIssues } from "@/lib/schema-health";
+import {
+  KeyRound,
+  Link2,
+  GripVertical,
+  Plus,
+  Trash2,
+  X,
+  Pencil,
+  AlertCircle,
+  AlertTriangle,
+} from "lucide-react";
 
 interface TableNodeData {
   tableName: string;
@@ -22,6 +38,18 @@ function TableNodeComponent({ id, data, selected }: NodeProps<TableNodeData>) {
   const deleteColumn = useSchemaStore((s) => s.deleteColumn);
   const selectTable = useSchemaStore((s) => s.selectTable);
   const selectColumn = useSchemaStore((s) => s.selectColumn);
+  const healthResult = useSchemaStore((s) => s.healthResult);
+
+  // Compute issues for this table
+  const tableIssues = useMemo<SchemaIssue[]>(() => {
+    if (!healthResult) return [];
+    return getTableIssues(id, healthResult);
+  }, [id, healthResult]);
+
+  const errorIssues = tableIssues.filter((i) => i.severity === "error");
+  const warningIssues = tableIssues.filter((i) => i.severity === "warning");
+  const hasErrors = errorIssues.length > 0;
+  const hasWarnings = warningIssues.length > 0;
 
   const [editingTableName, setEditingTableName] = useState(false);
   const [tableNameDraft, setTableNameDraft] = useState(tableName);
@@ -56,13 +84,40 @@ function TableNodeComponent({ id, data, selected }: NodeProps<TableNodeData>) {
 
   return (
     <div
-      className={`min-w-[260px] max-w-[340px] rounded-xl border bg-card text-card-foreground shadow-md ${
-        selected
-          ? "border-primary shadow-[0_0_20px_hsl(var(--primary)/0.2)]"
-          : "border-border hover:border-primary/40"
+      className={`min-w-[260px] max-w-[340px] rounded-xl border bg-card text-card-foreground shadow-md relative ${
+        hasErrors
+          ? "border-red-500 shadow-[0_0_15px_rgba(239,68,68,0.25)]"
+          : hasWarnings && !selected
+            ? "border-yellow-500/60 shadow-[0_0_10px_rgba(234,179,8,0.15)]"
+            : selected
+              ? "border-primary shadow-[0_0_20px_hsl(var(--primary)/0.2)]"
+              : "border-border hover:border-primary/40"
       }`}
       onClick={() => selectTable(id)}
     >
+      {/* Issue badges */}
+      {(hasErrors || hasWarnings) && (
+        <div className="absolute -top-2 -right-2 flex items-center gap-1 z-10">
+          {hasErrors && (
+            <div
+              className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-red-500 text-white text-[9px] font-medium shadow-sm"
+              title={errorIssues.map((i) => i.title).join(", ")}
+            >
+              <AlertCircle className="w-2.5 h-2.5" />
+              {errorIssues.length}
+            </div>
+          )}
+          {hasWarnings && (
+            <div
+              className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-yellow-500 text-white text-[9px] font-medium shadow-sm"
+              title={warningIssues.map((i) => i.title).join(", ")}
+            >
+              <AlertTriangle className="w-2.5 h-2.5" />
+              {warningIssues.length}
+            </div>
+          )}
+        </div>
+      )}
       {/* Table Header */}
       <div className="flex items-center justify-between rounded-t-xl bg-primary/10 px-3 py-2.5 border-b border-border">
         <div className="flex items-center gap-2 flex-1 min-w-0">

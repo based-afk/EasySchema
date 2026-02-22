@@ -7,6 +7,8 @@ import {
   ON_DELETE_ACTIONS,
   ColumnType,
   OnDeleteAction,
+  TableIndex,
+  IndexType,
 } from "@/lib/schema-types";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
@@ -19,7 +21,10 @@ import {
   ToggleRight,
   Trash2,
   Plus,
+  Database,
+  AlertCircle,
 } from "lucide-react";
+import { getTableIssues } from "@/lib/schema-health";
 
 export function PropertiesPanel() {
   const selection = useSchemaStore((s) => s.selection);
@@ -33,6 +38,10 @@ export function PropertiesPanel() {
   const updateRelationship = useSchemaStore((s) => s.updateRelationship);
   const deleteRelationship = useSchemaStore((s) => s.deleteRelationship);
   const clearSelection = useSchemaStore((s) => s.clearSelection);
+  const addIndex = useSchemaStore((s) => s.addIndex);
+  const deleteIndex = useSchemaStore((s) => s.deleteIndex);
+  const getTableIndexes = useSchemaStore((s) => s.getTableIndexes);
+  const healthResult = useSchemaStore((s) => s.healthResult);
 
   const { tableId, columnId, relationshipId } = selection;
 
@@ -55,8 +64,14 @@ export function PropertiesPanel() {
         <PanelHeader title="Relationship" onClose={clearSelection} />
         <Separator />
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          <InfoRow label="From" value={`${sourceTable?.name}.${sourceCol?.name}`} />
-          <InfoRow label="To" value={`${targetTable?.name}.${targetCol?.name}`} />
+          <InfoRow
+            label="From"
+            value={`${sourceTable?.name}.${sourceCol?.name}`}
+          />
+          <InfoRow
+            label="To"
+            value={`${targetTable?.name}.${targetCol?.name}`}
+          />
 
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground">
@@ -66,7 +81,10 @@ export function PropertiesPanel() {
               value={rel.type}
               onChange={(e) =>
                 updateRelationship(relationshipId, {
-                  type: e.target.value as "one-to-one" | "one-to-many" | "many-to-many",
+                  type: e.target.value as
+                    | "one-to-one"
+                    | "one-to-many"
+                    | "many-to-many",
                 })
               }
               className="w-full text-xs px-2 py-1.5 rounded-md border border-border bg-muted/30 outline-none focus:ring-1 focus:ring-primary/50"
@@ -196,9 +214,7 @@ export function PropertiesPanel() {
               icon={<Snowflake className="w-3.5 h-3.5" />}
               label="Unique"
               checked={col.isUnique}
-              onChange={(v) =>
-                updateColumn(tableId, columnId, { isUnique: v })
-              }
+              onChange={(v) => updateColumn(tableId, columnId, { isUnique: v })}
             />
             <ToggleRow
               icon={<ToggleRight className="w-3.5 h-3.5" />}
@@ -332,6 +348,53 @@ export function PropertiesPanel() {
               </div>
             </>
           )}
+
+          {/* Index Management */}
+          <Separator />
+          <IndexManagementSection
+            tableId={tableId}
+            columns={table.columns}
+            addIndex={addIndex}
+            deleteIndex={deleteIndex}
+            getTableIndexes={getTableIndexes}
+          />
+
+          {/* Table Issues */}
+          {healthResult &&
+            (() => {
+              const issues = getTableIssues(tableId, healthResult);
+              if (issues.length === 0) return null;
+              return (
+                <>
+                  <Separator />
+                  <div className="space-y-1">
+                    <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3 text-yellow-500" />
+                      Issues ({issues.length})
+                    </span>
+                    {issues.map((issue) => (
+                      <div
+                        key={issue.id}
+                        className={`text-xs px-2 py-1.5 rounded border ${
+                          issue.severity === "error"
+                            ? "border-red-500/30 bg-red-500/5 text-red-400"
+                            : issue.severity === "warning"
+                              ? "border-yellow-500/30 bg-yellow-500/5 text-yellow-500"
+                              : "border-blue-400/30 bg-blue-400/5 text-blue-400"
+                        }`}
+                      >
+                        <div className="font-medium">{issue.title}</div>
+                        {issue.suggestion && (
+                          <div className="text-muted-foreground mt-0.5 text-[10px]">
+                            {issue.suggestion}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              );
+            })()}
 
           <Separator />
           <Button
@@ -509,6 +572,177 @@ function TableNameField({
         }}
         className="w-full text-xs px-2 py-1.5 rounded-md border border-border bg-muted/30 outline-none focus:ring-1 focus:ring-primary/50 font-mono"
       />
+    </div>
+  );
+}
+
+// ─── Index Management ───────────────────────────────────────────────────────
+
+function IndexManagementSection({
+  tableId,
+  columns,
+  addIndex,
+  deleteIndex,
+  getTableIndexes,
+}: {
+  tableId: string;
+  columns: { id: string; name: string }[];
+  addIndex: (tableId: string, index: TableIndex) => void;
+  deleteIndex: (tableId: string, indexId: string) => void;
+  getTableIndexes: (tableId: string) => TableIndex[];
+}) {
+  const [showAdd, setShowAdd] = useState(false);
+  const [selectedCols, setSelectedCols] = useState<string[]>([]);
+  const [indexType, setIndexType] = useState<IndexType>("btree");
+  const [isUniqueIdx, setIsUniqueIdx] = useState(false);
+
+  const tableIndexes = getTableIndexes(tableId);
+
+  const handleAddIndex = () => {
+    if (selectedCols.length === 0) return;
+
+    const colNames = selectedCols
+      .map((cid) => columns.find((c) => c.id === cid)?.name ?? "col")
+      .join("_");
+
+    const newIndex: TableIndex = {
+      id: `idx-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      name: `idx_${colNames}`,
+      columns: selectedCols,
+      type: selectedCols.length > 1 ? "composite" : indexType,
+      isUnique: isUniqueIdx,
+    };
+
+    addIndex(tableId, newIndex);
+    setSelectedCols([]);
+    setIsUniqueIdx(false);
+    setShowAdd(false);
+  };
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+          <Database className="w-3 h-3" />
+          Indexes ({tableIndexes.length})
+        </span>
+        <button
+          onClick={() => setShowAdd(!showAdd)}
+          className="text-[10px] text-primary hover:underline flex items-center gap-0.5"
+        >
+          <Plus className="w-3 h-3" />
+          Add
+        </button>
+      </div>
+
+      {/* Existing indexes */}
+      {tableIndexes.map((idx) => (
+        <div
+          key={idx.id}
+          className="flex items-center justify-between text-xs px-2 py-1.5 rounded bg-muted/30 border border-border"
+        >
+          <div className="flex-1 min-w-0">
+            <div className="font-mono text-foreground truncate text-[10px]">
+              {idx.name}
+            </div>
+            <div className="text-[9px] text-muted-foreground/70">
+              {idx.isUnique ? "UNIQUE " : ""}
+              {idx.type.toUpperCase()} on{" "}
+              {idx.columns
+                .map((cid) => columns.find((c) => c.id === cid)?.name ?? cid)
+                .join(", ")}
+            </div>
+          </div>
+          <button
+            onClick={() => deleteIndex(tableId, idx.id)}
+            className="p-0.5 rounded hover:bg-destructive/20 flex-shrink-0"
+          >
+            <X className="w-3 h-3 text-muted-foreground hover:text-destructive" />
+          </button>
+        </div>
+      ))}
+
+      {/* Add index form */}
+      {showAdd && (
+        <div className="p-2 rounded-lg border border-primary/30 bg-primary/5 space-y-2">
+          <div className="space-y-1">
+            <label className="text-[10px] text-muted-foreground">
+              Columns (select one or more)
+            </label>
+            <div className="space-y-1">
+              {columns.map((col) => (
+                <label
+                  key={col.id}
+                  className="flex items-center gap-1.5 text-[10px] cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedCols.includes(col.id)}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelectedCols([...selectedCols, col.id]);
+                      } else {
+                        setSelectedCols(
+                          selectedCols.filter((c) => c !== col.id),
+                        );
+                      }
+                    }}
+                    className="rounded border-border"
+                  />
+                  <span className="font-mono">{col.name}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {selectedCols.length <= 1 && (
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">Type</label>
+              <select
+                value={indexType}
+                onChange={(e) => setIndexType(e.target.value as IndexType)}
+                className="w-full text-[10px] px-1.5 py-1 rounded border border-border bg-muted/30 outline-none"
+              >
+                <option value="btree">B-Tree</option>
+                <option value="hash">Hash</option>
+                <option value="unique">Unique</option>
+              </select>
+            </div>
+          )}
+
+          <label className="flex items-center gap-1.5 text-[10px] cursor-pointer">
+            <input
+              type="checkbox"
+              checked={isUniqueIdx}
+              onChange={(e) => setIsUniqueIdx(e.target.checked)}
+              className="rounded border-border"
+            />
+            <span>Unique Index</span>
+          </label>
+
+          <div className="flex gap-1.5">
+            <Button
+              size="sm"
+              className="flex-1 text-[10px] h-6"
+              onClick={handleAddIndex}
+              disabled={selectedCols.length === 0}
+            >
+              Create Index
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-[10px] h-6"
+              onClick={() => {
+                setShowAdd(false);
+                setSelectedCols([]);
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

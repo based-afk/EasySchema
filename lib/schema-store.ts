@@ -2,12 +2,17 @@ import { create } from "zustand";
 import {
   TableSchema,
   Column,
-  ColumnType,
   Relationship,
   SchemaSnapshot,
   SelectionState,
-  OnDeleteAction,
+  TableIndex,
+  SchemaHealthResult,
+  SchemaVersion,
+  PromptVersion,
+  PromptAnalysis,
 } from "./schema-types";
+import { computeSchemaHealth } from "./schema-health";
+import { createSchemaVersion, addVersion } from "./version-history";
 
 // ─── History helpers ────────────────────────────────────────────────────────
 
@@ -18,7 +23,10 @@ function takeSnapshot(state: {
   relationships: Record<string, Relationship>;
 }): SchemaSnapshot {
   return JSON.parse(
-    JSON.stringify({ tables: state.tables, relationships: state.relationships }),
+    JSON.stringify({
+      tables: state.tables,
+      relationships: state.relationships,
+    }),
   );
 }
 
@@ -37,22 +45,52 @@ export interface SchemaStore {
   past: SchemaSnapshot[];
   future: SchemaSnapshot[];
 
+  // ── Indexes ───────────────────────────────────────────────────────────
+  indexes: Record<string, TableIndex[]>;
+
+  // ── Schema Health ─────────────────────────────────────────────────────
+  healthResult: SchemaHealthResult | null;
+
+  // ── Version History ───────────────────────────────────────────────────
+  schemaVersions: SchemaVersion[];
+
+  // ── Prompt Intelligence ───────────────────────────────────────────────
+  promptHistory: PromptVersion[];
+  currentPromptAnalysis: PromptAnalysis | null;
+
   // ── Table actions ─────────────────────────────────────────────────────
   addTable: (table: TableSchema) => void;
   deleteTable: (tableId: string) => void;
   updateTableName: (tableId: string, name: string) => void;
-  updateTablePosition: (tableId: string, position: { x: number; y: number }) => void;
+  updateTablePosition: (
+    tableId: string,
+    position: { x: number; y: number },
+  ) => void;
   setTables: (tables: TableSchema[]) => void;
 
   // ── Column actions ────────────────────────────────────────────────────
   addColumn: (tableId: string, column?: Partial<Column>) => void;
   deleteColumn: (tableId: string, columnId: string) => void;
-  updateColumn: (tableId: string, columnId: string, patch: Partial<Column>) => void;
+  updateColumn: (
+    tableId: string,
+    columnId: string,
+    patch: Partial<Column>,
+  ) => void;
 
   // ── Relationship actions ──────────────────────────────────────────────
   addRelationship: (rel: Relationship) => void;
   deleteRelationship: (relId: string) => void;
   updateRelationship: (relId: string, patch: Partial<Relationship>) => void;
+
+  // ── Index actions ─────────────────────────────────────────────────────
+  addIndex: (tableId: string, index: TableIndex) => void;
+  deleteIndex: (tableId: string, indexId: string) => void;
+  updateIndex: (
+    tableId: string,
+    indexId: string,
+    patch: Partial<TableIndex>,
+  ) => void;
+  getTableIndexes: (tableId: string) => TableIndex[];
 
   // ── Selection actions ─────────────────────────────────────────────────
   selectTable: (tableId: string | null) => void;
@@ -68,6 +106,18 @@ export interface SchemaStore {
 
   // ── Schema name ───────────────────────────────────────────────────────
   setSchemaName: (name: string) => void;
+
+  // ── Schema Health ─────────────────────────────────────────────────────
+  recomputeHealth: () => void;
+
+  // ── Version History ───────────────────────────────────────────────────
+  saveVersion: (description?: string) => void;
+  getVersions: () => SchemaVersion[];
+
+  // ── Prompt Intelligence ───────────────────────────────────────────────
+  addPromptVersion: (version: PromptVersion) => void;
+  setPromptAnalysis: (analysis: PromptAnalysis) => void;
+  getPromptHistory: () => PromptVersion[];
 
   // ── Derived helpers ───────────────────────────────────────────────────
   getTablesArray: () => TableSchema[];
@@ -95,6 +145,11 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
     selection: { tableId: null, columnId: null, relationshipId: null },
     past: [],
     future: [],
+    indexes: {},
+    healthResult: null,
+    schemaVersions: [],
+    promptHistory: [],
+    currentPromptAnalysis: null,
 
     // ── Table actions ─────────────────────────────────────────────────
     addTable: (table) => {
@@ -217,7 +272,8 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
         const rels = { ...s.relationships };
         for (const [id, rel] of Object.entries(rels)) {
           if (
-            (rel.sourceTableId === tableId && rel.sourceColumnId === columnId) ||
+            (rel.sourceTableId === tableId &&
+              rel.sourceColumnId === columnId) ||
             (rel.targetTableId === tableId && rel.targetColumnId === columnId)
           ) {
             delete rels[id];
@@ -403,6 +459,97 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
 
     // ── Schema name ───────────────────────────────────────────────────
     setSchemaName: (name) => set({ schemaName: name }),
+
+    // ── Index actions ─────────────────────────────────────────────────
+    addIndex: (tableId, index) => {
+      pushHistory();
+      set((s) => {
+        const current = s.indexes[tableId] ?? [];
+        return {
+          indexes: { ...s.indexes, [tableId]: [...current, index] },
+        };
+      });
+    },
+
+    deleteIndex: (tableId, indexId) => {
+      pushHistory();
+      set((s) => {
+        const current = s.indexes[tableId] ?? [];
+        return {
+          indexes: {
+            ...s.indexes,
+            [tableId]: current.filter((idx) => idx.id !== indexId),
+          },
+        };
+      });
+    },
+
+    updateIndex: (tableId, indexId, patch) => {
+      pushHistory();
+      set((s) => {
+        const current = s.indexes[tableId] ?? [];
+        return {
+          indexes: {
+            ...s.indexes,
+            [tableId]: current.map((idx) =>
+              idx.id === indexId ? { ...idx, ...patch } : idx,
+            ),
+          },
+        };
+      });
+    },
+
+    getTableIndexes: (tableId) => get().indexes[tableId] ?? [],
+
+    // ── Schema Health ─────────────────────────────────────────────────
+    recomputeHealth: () => {
+      const { tables, relationships, indexes } = get();
+      const tablesArr = Object.values(tables);
+      const relsArr = Object.values(relationships);
+      const result = computeSchemaHealth(tablesArr, relsArr, indexes);
+      set({ healthResult: result });
+    },
+
+    // ── Version History ───────────────────────────────────────────────
+    saveVersion: (description) => {
+      const {
+        tables,
+        relationships,
+        indexes,
+        schemaName,
+        schemaVersions,
+        healthResult,
+      } = get();
+      const tablesArr = Object.values(tables);
+      const relsArr = Object.values(relationships);
+      const health =
+        healthResult ?? computeSchemaHealth(tablesArr, relsArr, indexes);
+      const versionNumber = schemaVersions.length + 1;
+      const version = createSchemaVersion(
+        versionNumber,
+        schemaName,
+        tablesArr,
+        relsArr,
+        indexes,
+        health.totalScore,
+        null,
+        description,
+      );
+      set({ schemaVersions: addVersion(schemaVersions, version) });
+    },
+
+    getVersions: () => get().schemaVersions,
+
+    // ── Prompt Intelligence ───────────────────────────────────────────
+    addPromptVersion: (version) => {
+      set((s) => ({ promptHistory: [...s.promptHistory, version] }));
+    },
+
+    setPromptAnalysis: (analysis) => {
+      set({ currentPromptAnalysis: analysis });
+    },
+
+    getPromptHistory: () => get().promptHistory,
 
     // ── Derived helpers ───────────────────────────────────────────────
     getTablesArray: () => Object.values(get().tables),

@@ -93,15 +93,137 @@ export interface SavedSchema {
   savedAt: string;
 }
 
+// ─── Index ──────────────────────────────────────────────────────────────────
+
+export type IndexType = "btree" | "hash" | "unique" | "composite";
+
+export interface TableIndex {
+  id: string;
+  name: string;
+  columns: string[]; // column IDs
+  type: IndexType;
+  isUnique: boolean;
+}
+
+// ─── Schema Health ──────────────────────────────────────────────────────────
+
+export type IssueSeverity = "error" | "warning" | "info";
+export type IssueCategory = "structural" | "performance" | "design";
+
+export interface SchemaIssue {
+  id: string;
+  category: IssueCategory;
+  severity: IssueSeverity;
+  tableId?: string;
+  columnId?: string;
+  title: string;
+  description: string;
+  suggestion?: string;
+}
+
+export interface HealthBreakdown {
+  structural: { score: number; max: number; issues: SchemaIssue[] };
+  performance: { score: number; max: number; issues: SchemaIssue[] };
+  design: { score: number; max: number; issues: SchemaIssue[] };
+}
+
+export interface SchemaHealthResult {
+  totalScore: number;
+  maxScore: number;
+  breakdown: HealthBreakdown;
+  allIssues: SchemaIssue[];
+}
+
+// ─── Prompt Intelligence ────────────────────────────────────────────────────
+
+export interface RuleScoreBreakdown {
+  length: number;
+  entities: number;
+  relationships: number;
+  constraints: number;
+  scale: number;
+  roles: number;
+}
+
+export interface AIScoreBreakdown {
+  specificity: number;
+  relationshipClarity: number;
+  constraintsAndRules: number;
+  realWorldCompleteness: number;
+}
+
+export interface PromptAnalysis {
+  ruleScore: number;
+  ruleBreakdown: RuleScoreBreakdown;
+  aiScore: number | null;
+  aiBreakdown: AIScoreBreakdown | null;
+  combinedScore: number;
+  suggestions: string[];
+  detectedEntities: string[];
+  detectedRelationships: string[];
+  aiSuggestions?: string[];
+}
+
+export interface PromptVersion {
+  id: string;
+  text: string;
+  ruleScore: number;
+  aiScore: number | null;
+  combinedScore: number;
+  timestamp: string;
+  isRefined: boolean;
+}
+
+// ─── Schema Version History ─────────────────────────────────────────────────
+
+export interface SchemaVersion {
+  id: string;
+  versionNumber: number;
+  name: string;
+  tables: TableSchema[];
+  relationships: Relationship[];
+  indexes: Record<string, TableIndex[]>;
+  healthScore: number;
+  promptScore: number | null;
+  timestamp: string;
+  description?: string;
+}
+
+// ─── Save / Load (updated) ─────────────────────────────────────────────────
+
+export interface SavedSchemaV2 {
+  version: 2;
+  name: string;
+  tables: TableSchema[];
+  relationships: Relationship[];
+  indexes: Record<string, TableIndex[]>;
+  versions: SchemaVersion[];
+  promptHistory: PromptVersion[];
+  savedAt: string;
+}
+
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 export const ALL_COLUMN_TYPES: ColumnType[] = [
-  "INT", "BIGINT", "SERIAL", "TEXT", "VARCHAR", "BOOLEAN",
-  "DATE", "TIMESTAMP", "FLOAT", "DECIMAL", "JSON", "UUID",
+  "INT",
+  "BIGINT",
+  "SERIAL",
+  "TEXT",
+  "VARCHAR",
+  "BOOLEAN",
+  "DATE",
+  "TIMESTAMP",
+  "FLOAT",
+  "DECIMAL",
+  "JSON",
+  "UUID",
 ];
 
 export const ON_DELETE_ACTIONS: OnDeleteAction[] = [
-  "CASCADE", "SET NULL", "RESTRICT", "NO ACTION",
+  "CASCADE",
+  "SET NULL",
+  "RESTRICT",
+  "NO ACTION",
 ];
 
 // ─── Sample schema for demo ─────────────────────────────────────────────────
@@ -111,10 +233,43 @@ export const SAMPLE_TABLES: TableSchema[] = [
     id: "users",
     name: "users",
     columns: [
-      { id: "u1", name: "id", type: "SERIAL", isPrimaryKey: true, isForeignKey: false, isNullable: false, isUnique: true },
-      { id: "u2", name: "name", type: "VARCHAR", isPrimaryKey: false, isForeignKey: false, isNullable: false, isUnique: false },
-      { id: "u3", name: "email", type: "VARCHAR", isPrimaryKey: false, isForeignKey: false, isNullable: false, isUnique: true },
-      { id: "u4", name: "created_at", type: "TIMESTAMP", isPrimaryKey: false, isForeignKey: false, isNullable: false, isUnique: false, defaultValue: "NOW()" },
+      {
+        id: "u1",
+        name: "id",
+        type: "SERIAL",
+        isPrimaryKey: true,
+        isForeignKey: false,
+        isNullable: false,
+        isUnique: true,
+      },
+      {
+        id: "u2",
+        name: "name",
+        type: "VARCHAR",
+        isPrimaryKey: false,
+        isForeignKey: false,
+        isNullable: false,
+        isUnique: false,
+      },
+      {
+        id: "u3",
+        name: "email",
+        type: "VARCHAR",
+        isPrimaryKey: false,
+        isForeignKey: false,
+        isNullable: false,
+        isUnique: true,
+      },
+      {
+        id: "u4",
+        name: "created_at",
+        type: "TIMESTAMP",
+        isPrimaryKey: false,
+        isForeignKey: false,
+        isNullable: false,
+        isUnique: false,
+        defaultValue: "NOW()",
+      },
     ],
     position: { x: 100, y: 100 },
   },
@@ -122,11 +277,53 @@ export const SAMPLE_TABLES: TableSchema[] = [
     id: "posts",
     name: "posts",
     columns: [
-      { id: "p1", name: "id", type: "SERIAL", isPrimaryKey: true, isForeignKey: false, isNullable: false, isUnique: true },
-      { id: "p2", name: "title", type: "VARCHAR", isPrimaryKey: false, isForeignKey: false, isNullable: false, isUnique: false },
-      { id: "p3", name: "content", type: "TEXT", isPrimaryKey: false, isForeignKey: false, isNullable: true, isUnique: false },
-      { id: "p4", name: "user_id", type: "INT", isPrimaryKey: false, isForeignKey: true, isNullable: false, isUnique: false, references: { table: "users", column: "id" } },
-      { id: "p5", name: "created_at", type: "TIMESTAMP", isPrimaryKey: false, isForeignKey: false, isNullable: false, isUnique: false, defaultValue: "NOW()" },
+      {
+        id: "p1",
+        name: "id",
+        type: "SERIAL",
+        isPrimaryKey: true,
+        isForeignKey: false,
+        isNullable: false,
+        isUnique: true,
+      },
+      {
+        id: "p2",
+        name: "title",
+        type: "VARCHAR",
+        isPrimaryKey: false,
+        isForeignKey: false,
+        isNullable: false,
+        isUnique: false,
+      },
+      {
+        id: "p3",
+        name: "content",
+        type: "TEXT",
+        isPrimaryKey: false,
+        isForeignKey: false,
+        isNullable: true,
+        isUnique: false,
+      },
+      {
+        id: "p4",
+        name: "user_id",
+        type: "INT",
+        isPrimaryKey: false,
+        isForeignKey: true,
+        isNullable: false,
+        isUnique: false,
+        references: { table: "users", column: "id" },
+      },
+      {
+        id: "p5",
+        name: "created_at",
+        type: "TIMESTAMP",
+        isPrimaryKey: false,
+        isForeignKey: false,
+        isNullable: false,
+        isUnique: false,
+        defaultValue: "NOW()",
+      },
     ],
     position: { x: 450, y: 100 },
   },
@@ -134,11 +331,54 @@ export const SAMPLE_TABLES: TableSchema[] = [
     id: "comments",
     name: "comments",
     columns: [
-      { id: "c1", name: "id", type: "SERIAL", isPrimaryKey: true, isForeignKey: false, isNullable: false, isUnique: true },
-      { id: "c2", name: "body", type: "TEXT", isPrimaryKey: false, isForeignKey: false, isNullable: false, isUnique: false },
-      { id: "c3", name: "post_id", type: "INT", isPrimaryKey: false, isForeignKey: true, isNullable: false, isUnique: false, references: { table: "posts", column: "id" } },
-      { id: "c4", name: "user_id", type: "INT", isPrimaryKey: false, isForeignKey: true, isNullable: false, isUnique: false, references: { table: "users", column: "id" } },
-      { id: "c5", name: "created_at", type: "TIMESTAMP", isPrimaryKey: false, isForeignKey: false, isNullable: false, isUnique: false, defaultValue: "NOW()" },
+      {
+        id: "c1",
+        name: "id",
+        type: "SERIAL",
+        isPrimaryKey: true,
+        isForeignKey: false,
+        isNullable: false,
+        isUnique: true,
+      },
+      {
+        id: "c2",
+        name: "body",
+        type: "TEXT",
+        isPrimaryKey: false,
+        isForeignKey: false,
+        isNullable: false,
+        isUnique: false,
+      },
+      {
+        id: "c3",
+        name: "post_id",
+        type: "INT",
+        isPrimaryKey: false,
+        isForeignKey: true,
+        isNullable: false,
+        isUnique: false,
+        references: { table: "posts", column: "id" },
+      },
+      {
+        id: "c4",
+        name: "user_id",
+        type: "INT",
+        isPrimaryKey: false,
+        isForeignKey: true,
+        isNullable: false,
+        isUnique: false,
+        references: { table: "users", column: "id" },
+      },
+      {
+        id: "c5",
+        name: "created_at",
+        type: "TIMESTAMP",
+        isPrimaryKey: false,
+        isForeignKey: false,
+        isNullable: false,
+        isUnique: false,
+        defaultValue: "NOW()",
+      },
     ],
     position: { x: 250, y: 350 },
   },
