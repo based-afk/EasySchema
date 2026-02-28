@@ -14,6 +14,7 @@ import {
   analyzePromptHybrid,
   refinePrompt,
   createPromptVersion,
+  generateSchemaAI,
 } from "@/lib/prompt-intelligence";
 import { SchemaHealthPanel } from "./SchemaHealthPanel";
 import { VersionHistoryPanel } from "./VersionHistoryPanel";
@@ -41,6 +42,81 @@ import {
 
 type SidebarTab = "prompt" | "health" | "history";
 
+const VALID_COLUMN_TYPES = new Set([
+  "INT",
+  "BIGINT",
+  "SERIAL",
+  "TEXT",
+  "VARCHAR",
+  "BOOLEAN",
+  "DATE",
+  "TIMESTAMP",
+  "FLOAT",
+  "DECIMAL",
+  "JSON",
+  "UUID",
+]);
+
+/** Convert AI-generated schema JSON into TableSchema[] the store expects */
+function aiResultToTables(
+  aiTables: {
+    name: string;
+    columns: {
+      name: string;
+      type: string;
+      isPrimaryKey: boolean;
+      isForeignKey: boolean;
+      isNullable: boolean;
+      isUnique: boolean;
+      defaultValue?: string;
+    }[];
+  }[],
+): TableSchema[] {
+  return aiTables.map((t, i) => ({
+    id: t.name,
+    name: t.name,
+    columns: t.columns.map((c, ci) => ({
+      id: `col-${i}-${ci}-${Date.now()}`,
+      name: c.name,
+      type: (VALID_COLUMN_TYPES.has(c.type?.toUpperCase())
+        ? c.type.toUpperCase()
+        : "VARCHAR") as import("@/lib/schema-types").ColumnType,
+      isPrimaryKey: !!c.isPrimaryKey,
+      isForeignKey: !!c.isForeignKey,
+      isNullable: !!c.isNullable,
+      isUnique: !!c.isUnique,
+      defaultValue: c.defaultValue,
+      ...(c.isForeignKey
+        ? {
+            references: {
+              table: findReferencedTable(
+                c.name,
+                aiTables.map((tt) => tt.name),
+              ),
+              column: "id",
+            },
+          }
+        : {}),
+    })),
+    position: {
+      x: 100 + (i % 3) * 350,
+      y: 100 + Math.floor(i / 3) * 300,
+    },
+  }));
+}
+
+/** Infer referenced table from FK column name like "user_id" → "users" */
+function findReferencedTable(colName: string, tableNames: string[]): string {
+  const base = colName.replace(/_id$/, "");
+  // Try exact match, then plural
+  return (
+    tableNames.find((n) => n === base) ??
+    tableNames.find((n) => n === base + "s") ??
+    tableNames.find((n) => n.startsWith(base)) ??
+    base
+  );
+}
+
 const exampleDescriptions = [
   "E-commerce store with users, products, orders, payments, and reviews",
   "Blog platform with users, posts, comments, and categories",
@@ -56,9 +132,7 @@ export function AssistantSidebar() {
   const addTable = useSchemaStore((s) => s.addTable);
   const addPromptVersion = useSchemaStore((s) => s.addPromptVersion);
   const setPromptAnalysis = useSchemaStore((s) => s.setPromptAnalysis);
-  const currentPromptAnalysis = useSchemaStore(
-    (s) => s.currentPromptAnalysis,
-  );
+  const currentPromptAnalysis = useSchemaStore((s) => s.currentPromptAnalysis);
 
   const tablesArray = Object.values(tables);
 
@@ -102,6 +176,11 @@ export function AssistantSidebar() {
     setIsAnalyzingAI(true);
     try {
       const analysis = await analyzePromptHybrid(description);
+      console.log("handleAIAnalysis result:", {
+        aiScore: analysis.aiScore,
+        combinedScore: analysis.combinedScore,
+        hasAIBreakdown: !!analysis.aiBreakdown,
+      });
       setPromptAnalysis(analysis);
 
       // Save prompt version
@@ -113,7 +192,8 @@ export function AssistantSidebar() {
         false,
       );
       addPromptVersion(version);
-    } catch {
+    } catch (err) {
+      console.error("handleAIAnalysis error:", err);
       // Falls back to rule-only
     } finally {
       setIsAnalyzingAI(false);
@@ -161,9 +241,14 @@ export function AssistantSidebar() {
     if (!description.trim()) return;
     setIsGenerating(true);
     setTimeout(() => {
-      const generated = generateSchemaFromDescription(description);
-      setPreviewTables(generated);
-      setIsGenerating(false);
+      try {
+        const generated = generateSchemaFromDescription(description);
+        setPreviewTables(generated);
+      } catch (err) {
+        console.error("handlePreview error:", err);
+      } finally {
+        setIsGenerating(false);
+      }
     }, 400);
   }, [description]);
 
@@ -178,14 +263,38 @@ export function AssistantSidebar() {
     setPreviewTables(null);
   }, []);
 
-  const handleGenerateDirect = useCallback(() => {
+  const handleGenerateDirect = useCallback(async () => {
     if (!description.trim()) return;
     setIsGenerating(true);
-    setTimeout(() => {
-      const generated = generateSchemaFromDescription(description);
-      setTables(generated);
+    try {
+      // Try AI-powered generation first
+      const aiResult = await generateSchemaAI(description);
+      if (!aiResult.error && aiResult.tables.length > 0) {
+        console.log(
+          "Generate: using AI result",
+          aiResult.tables.length,
+          "tables",
+        );
+        const tables = aiResultToTables(aiResult.tables);
+        setTables(tables);
+      } else {
+        // Fall back to local keyword matcher
+        console.log("Generate: falling back to local generation");
+        const generated = generateSchemaFromDescription(description);
+        setTables(generated);
+      }
+    } catch (err) {
+      console.error("handleGenerateDirect error:", err);
+      // Last-resort fallback
+      try {
+        const generated = generateSchemaFromDescription(description);
+        setTables(generated);
+      } catch (fallbackErr) {
+        console.error("Local generate also failed:", fallbackErr);
+      }
+    } finally {
       setIsGenerating(false);
-    }, 600);
+    }
   }, [description, setTables]);
 
   const handleExampleClick = (example: string) => {
@@ -817,7 +926,11 @@ function ScoreBadge({
 }) {
   const pct = Math.round((score / max) * 100);
   const color =
-    pct >= 70 ? "text-green-500" : pct >= 40 ? "text-yellow-500" : "text-red-400";
+    pct >= 70
+      ? "text-green-500"
+      : pct >= 40
+        ? "text-yellow-500"
+        : "text-red-400";
   return (
     <div className="flex flex-col items-center justify-center px-2 py-1.5 rounded-md border border-border bg-muted/20">
       <span className={`text-sm font-bold ${color}`}>{score}</span>

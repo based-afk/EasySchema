@@ -15,7 +15,7 @@ export async function POST(req: NextRequest) {
 
     if (!isAIAvailable()) {
       return NextResponse.json(
-        { error: "OPENAI_API_KEY not configured", fallback: true },
+        { error: "GOOGLE_API_KEY not configured", fallback: true },
         { status: 503 },
       );
     }

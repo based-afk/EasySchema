@@ -34,10 +34,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       [projectId, auth.userId],
     );
     if (!project) {
-      return NextResponse.json(
-        { error: "Project not found" },
-        { status: 404 },
-      );
+      return NextResponse.json({ error: "Project not found" }, { status: 404 });
     }
 
     // Transaction: get next version number + insert

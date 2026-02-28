@@ -24,10 +24,9 @@ export async function POST(req: NextRequest) {
     }
 
     // Check if email already exists
-    const existing = await queryOne(
-      "SELECT id FROM users WHERE email = $1",
-      [email.toLowerCase().trim()],
-    );
+    const existing = await queryOne("SELECT id FROM users WHERE email = $1", [
+      email.toLowerCase().trim(),
+    ]);
     if (existing) {
       return NextResponse.json(
         { error: "Email already registered" },

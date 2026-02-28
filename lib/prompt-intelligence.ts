@@ -380,9 +380,13 @@ export async function analyzePromptHybrid(
       body: JSON.stringify({ prompt: description }),
     });
 
-    if (!res.ok) return local;
+    if (!res.ok) {
+      console.warn("analyzePromptHybrid: API returned", res.status);
+      return local;
+    }
 
     const data = await res.json();
+    console.log("analyzePromptHybrid: API response", data);
 
     if (data.aiScore != null && data.aiBreakdown) {
       const combined = Math.round(ruleResult.score * 0.4 + data.aiScore * 0.6);
@@ -394,7 +398,13 @@ export async function analyzePromptHybrid(
         aiSuggestions: data.suggestions ?? [],
       };
     }
-  } catch {
+
+    console.warn(
+      "analyzePromptHybrid: missing aiScore or aiBreakdown in response",
+      data,
+    );
+  } catch (err) {
+    console.error("analyzePromptHybrid error:", err);
     // AI unavailable — fall back to rule-only
   }
 
@@ -435,6 +445,60 @@ export async function refinePrompt(description: string): Promise<RefineResult> {
       improved: description,
       changes: [],
       error: "Failed to connect to AI service.",
+    };
+  }
+}
+
+// ─── AI Schema Generation (client-side wrapper) ────────────────────────────
+
+export interface AIGeneratedSchema {
+  tables: {
+    name: string;
+    columns: {
+      name: string;
+      type: string;
+      isPrimaryKey: boolean;
+      isForeignKey: boolean;
+      isNullable: boolean;
+      isUnique: boolean;
+      defaultValue?: string;
+    }[];
+  }[];
+  relationships: {
+    sourceTable: string;
+    sourceColumn: string;
+    targetTable: string;
+    targetColumn: string;
+    type: string;
+    onDelete: string;
+  }[];
+  error?: string;
+}
+
+export async function generateSchemaAI(
+  description: string,
+): Promise<AIGeneratedSchema> {
+  try {
+    const res = await fetch("/api/ai/generate-schema", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: description }),
+    });
+
+    if (!res.ok) {
+      return { tables: [], relationships: [], error: "AI service unavailable" };
+    }
+
+    const data = await res.json();
+    return {
+      tables: data.tables ?? [],
+      relationships: data.relationships ?? [],
+    };
+  } catch {
+    return {
+      tables: [],
+      relationships: [],
+      error: "Failed to connect to AI service",
     };
   }
 }

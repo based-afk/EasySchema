@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { analyzePrompt, isAIAvailable } from "@/lib/ai";
+import { generateSchema, isAIAvailable } from "@/lib/ai";
 
 export async function POST(req: NextRequest) {
   try {
@@ -20,13 +20,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const result = await analyzePrompt(prompt);
+    const result = await generateSchema(prompt);
 
     if (!result) {
       return NextResponse.json(
         {
           error:
-            "AI analysis failed. This may be due to rate limiting — please wait a moment and try again.",
+            "AI generation failed. This may be due to rate limiting — please wait a moment and try again.",
           fallback: true,
         },
         { status: 502 },
@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(result);
   } catch (error) {
-    console.error("analyze-prompt error:", error);
+    console.error("generate-schema error:", error);
     return NextResponse.json(
       { error: "Internal server error", fallback: true },
       { status: 500 },

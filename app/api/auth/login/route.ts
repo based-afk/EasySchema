@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { queryOne } from "@/lib/db";
 import { verifyPassword, signToken } from "@/lib/utils/auth";
-import { validateEmail, validatePassword, collectErrors } from "@/lib/utils/validation";
+import {
+  validateEmail,
+  validatePassword,
+  collectErrors,
+} from "@/lib/utils/validation";
 
 export async function POST(req: NextRequest) {
   try {

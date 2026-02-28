@@ -24,7 +24,10 @@ export function validatePassword(password: unknown): ValidationError | null {
     return { field: "password", message: "Password is required" };
   }
   if (password.length < 6) {
-    return { field: "password", message: "Password must be at least 6 characters" };
+    return {
+      field: "password",
+      message: "Password must be at least 6 characters",
+    };
   }
   if (password.length > 128) {
     return { field: "password", message: "Password must be ≤ 128 characters" };
@@ -37,10 +40,16 @@ export function validateDisplayName(name: unknown): ValidationError | null {
     return { field: "displayName", message: "Display name is required" };
   }
   if (name.trim().length < 2) {
-    return { field: "displayName", message: "Display name must be at least 2 characters" };
+    return {
+      field: "displayName",
+      message: "Display name must be at least 2 characters",
+    };
   }
   if (name.length > 100) {
-    return { field: "displayName", message: "Display name must be ≤ 100 characters" };
+    return {
+      field: "displayName",
+      message: "Display name must be ≤ 100 characters",
+    };
   }
   return null;
 }
@@ -58,7 +67,10 @@ export function validateProjectName(name: unknown): ValidationError | null {
   return null;
 }
 
-export function validateUUID(value: unknown, field: string): ValidationError | null {
+export function validateUUID(
+  value: unknown,
+  field: string,
+): ValidationError | null {
   if (typeof value !== "string") {
     return { field, message: `${field} must be a string` };
   }

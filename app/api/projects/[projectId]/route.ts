@@ -29,10 +29,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     );
 
     if (!project) {
-      return NextResponse.json(
-        { error: "Project not found" },
-        { status: 404 },
-      );
+      return NextResponse.json({ error: "Project not found" }, { status: 404 });
     }
 
     return NextResponse.json({
@@ -100,10 +97,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     );
 
     if (!project) {
-      return NextResponse.json(
-        { error: "Project not found" },
-        { status: 404 },
-      );
+      return NextResponse.json({ error: "Project not found" }, { status: 404 });
     }
 
     return NextResponse.json({
@@ -138,10 +132,7 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
     );
 
     if (result.rowCount === 0) {
-      return NextResponse.json(
-        { error: "Project not found" },
-        { status: 404 },
-      );
+      return NextResponse.json({ error: "Project not found" }, { status: 404 });
     }
 
     return NextResponse.json({ deleted: true });

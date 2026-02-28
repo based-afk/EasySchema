@@ -35,24 +35,26 @@ export async function query<T extends QueryResultRow = Record<string, unknown>>(
   const duration = Date.now() - start;
 
   if (process.env.NODE_ENV === "development") {
-    console.log("[SQL]", { text: text.slice(0, 80), duration, rows: result.rowCount });
+    console.log("[SQL]", {
+      text: text.slice(0, 80),
+      duration,
+      rows: result.rowCount,
+    });
   }
 
   return result;
 }
 
-export async function queryOne<T extends QueryResultRow = Record<string, unknown>>(
-  text: string,
-  params?: unknown[],
-): Promise<T | null> {
+export async function queryOne<
+  T extends QueryResultRow = Record<string, unknown>,
+>(text: string, params?: unknown[]): Promise<T | null> {
   const result = await query<T>(text, params);
   return result.rows[0] ?? null;
 }
 
-export async function queryMany<T extends QueryResultRow = Record<string, unknown>>(
-  text: string,
-  params?: unknown[],
-): Promise<T[]> {
+export async function queryMany<
+  T extends QueryResultRow = Record<string, unknown>,
+>(text: string, params?: unknown[]): Promise<T[]> {
   const result = await query<T>(text, params);
   return result.rows;
 }
