@@ -7,7 +7,10 @@ import { validateProjectName } from "@/lib/utils/validation";
 
 export async function GET(req: NextRequest) {
   try {
-    const auth = authenticateRequest(req.headers.get("authorization"));
+    const auth = authenticateRequest(
+      req.headers.get("authorization"),
+      req.headers.get("cookie"),
+    );
     if (!auth) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -53,7 +56,10 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const auth = authenticateRequest(req.headers.get("authorization"));
+    const auth = authenticateRequest(
+      req.headers.get("authorization"),
+      req.headers.get("cookie"),
+    );
     if (!auth) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

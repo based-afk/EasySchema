@@ -147,6 +147,9 @@ export function AssistantSidebar() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isAnalyzingAI, setIsAnalyzingAI] = useState(false);
   const [isRefining, setIsRefining] = useState(false);
+  const [breakdownModal, setBreakdownModal] = useState<"rule" | "ai" | null>(
+    null,
+  );
   const [refineResult, setRefineResult] = useState<{
     improved: string;
     changes: string[];
@@ -449,79 +452,26 @@ export function AssistantSidebar() {
                     )}
                   </div>
 
-                  {/* Rule breakdown */}
-                  <details className="group">
-                    <summary className="text-[10px] text-muted-foreground/60 cursor-pointer hover:text-muted-foreground flex items-center gap-1">
+                  {/* Breakdown actions */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setBreakdownModal("rule")}
+                      className="flex items-center justify-center gap-1 px-2 py-1.5 rounded-md border border-border text-[10px] text-foreground hover:bg-muted/40 transition-colors"
+                    >
                       <BarChart3 className="w-3 h-3" />
                       Score Breakdown
-                      <ChevronRight className="w-3 h-3 transition-transform group-open:rotate-90" />
-                    </summary>
-                    <div className="mt-1.5 space-y-1 pl-4">
-                      <BreakdownRow
-                        label="Length"
-                        score={analysis.ruleBreakdown.length}
-                        max={15}
-                      />
-                      <BreakdownRow
-                        label="Entities"
-                        score={analysis.ruleBreakdown.entities}
-                        max={30}
-                      />
-                      <BreakdownRow
-                        label="Relationships"
-                        score={analysis.ruleBreakdown.relationships}
-                        max={25}
-                      />
-                      <BreakdownRow
-                        label="Constraints"
-                        score={analysis.ruleBreakdown.constraints}
-                        max={15}
-                      />
-                      <BreakdownRow
-                        label="Scale"
-                        score={analysis.ruleBreakdown.scale}
-                        max={8}
-                      />
-                      <BreakdownRow
-                        label="Roles"
-                        score={analysis.ruleBreakdown.roles}
-                        max={7}
-                      />
-                    </div>
-                  </details>
-
-                  {/* AI breakdown if available */}
-                  {analysis.aiBreakdown && (
-                    <details className="group">
-                      <summary className="text-[10px] text-muted-foreground/60 cursor-pointer hover:text-muted-foreground flex items-center gap-1">
-                        <Brain className="w-3 h-3" />
-                        AI Breakdown
-                        <ChevronRight className="w-3 h-3 transition-transform group-open:rotate-90" />
-                      </summary>
-                      <div className="mt-1.5 space-y-1 pl-4">
-                        <BreakdownRow
-                          label="Specificity"
-                          score={analysis.aiBreakdown.specificity}
-                          max={25}
-                        />
-                        <BreakdownRow
-                          label="Rel. Clarity"
-                          score={analysis.aiBreakdown.relationshipClarity}
-                          max={25}
-                        />
-                        <BreakdownRow
-                          label="Constraints"
-                          score={analysis.aiBreakdown.constraintsAndRules}
-                          max={25}
-                        />
-                        <BreakdownRow
-                          label="Completeness"
-                          score={analysis.aiBreakdown.realWorldCompleteness}
-                          max={25}
-                        />
-                      </div>
-                    </details>
-                  )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBreakdownModal("ai")}
+                      disabled={!analysis.aiBreakdown}
+                      className="flex items-center justify-center gap-1 px-2 py-1.5 rounded-md border border-border text-[10px] text-foreground hover:bg-muted/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Brain className="w-3 h-3" />
+                      AI Breakdown
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -883,6 +833,113 @@ export function AssistantSidebar() {
           <p className="text-xs text-muted-foreground">Ready</p>
         </div>
       </div>
+
+      {analysis && breakdownModal && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
+          onClick={() => setBreakdownModal(null)}
+        >
+          <div
+            className="w-full max-w-lg rounded-xl border border-border bg-background shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+              <div className="flex items-center gap-2">
+                {breakdownModal === "rule" ? (
+                  <BarChart3 className="w-4 h-4 text-primary" />
+                ) : (
+                  <Brain className="w-4 h-4 text-primary" />
+                )}
+                <h3 className="text-sm font-semibold text-foreground">
+                  {breakdownModal === "rule"
+                    ? "Score Breakdown"
+                    : "AI Breakdown"}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBreakdownModal(null)}
+                className="p-1 rounded-md hover:bg-muted/60"
+                aria-label="Close breakdown"
+              >
+                <X className="w-4 h-4 text-muted-foreground" />
+              </button>
+            </div>
+
+            <div className="px-5 py-4 space-y-2.5 max-h-[70vh] overflow-y-auto">
+              {breakdownModal === "rule" && (
+                <>
+                  <LargeBreakdownRow
+                    label="Length"
+                    score={analysis.ruleBreakdown.length}
+                    max={15}
+                  />
+                  <LargeBreakdownRow
+                    label="Entities"
+                    score={analysis.ruleBreakdown.entities}
+                    max={30}
+                  />
+                  <LargeBreakdownRow
+                    label="Relationships"
+                    score={analysis.ruleBreakdown.relationships}
+                    max={25}
+                  />
+                  <LargeBreakdownRow
+                    label="Constraints"
+                    score={analysis.ruleBreakdown.constraints}
+                    max={15}
+                  />
+                  <LargeBreakdownRow
+                    label="Scale"
+                    score={analysis.ruleBreakdown.scale}
+                    max={8}
+                  />
+                  <LargeBreakdownRow
+                    label="Roles"
+                    score={analysis.ruleBreakdown.roles}
+                    max={7}
+                  />
+                </>
+              )}
+
+              {breakdownModal === "ai" && analysis.aiBreakdown && (
+                <>
+                  <LargeBreakdownRow
+                    label="Specificity"
+                    score={analysis.aiBreakdown.specificity}
+                    max={25}
+                  />
+                  <LargeBreakdownRow
+                    label="Rel. Clarity"
+                    score={analysis.aiBreakdown.relationshipClarity}
+                    max={25}
+                  />
+                  <LargeBreakdownRow
+                    label="Constraints"
+                    score={analysis.aiBreakdown.constraintsAndRules}
+                    max={25}
+                  />
+                  <LargeBreakdownRow
+                    label="Completeness"
+                    score={analysis.aiBreakdown.realWorldCompleteness}
+                    max={25}
+                  />
+                </>
+              )}
+            </div>
+
+            <div className="px-5 py-3 border-t border-border flex justify-end">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setBreakdownModal(null)}
+              >
+                Close
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </aside>
   );
 }
@@ -939,7 +996,7 @@ function ScoreBadge({
   );
 }
 
-function BreakdownRow({
+function LargeBreakdownRow({
   label,
   score,
   max,
@@ -950,17 +1007,17 @@ function BreakdownRow({
 }) {
   const pct = max > 0 ? (score / max) * 100 : 0;
   return (
-    <div className="flex items-center gap-2">
-      <span className="text-[10px] text-muted-foreground w-20 flex-shrink-0">
+    <div className="flex items-center gap-3">
+      <span className="text-sm text-foreground w-28 flex-shrink-0">
         {label}
       </span>
-      <div className="flex-1 h-1 rounded-full bg-muted overflow-hidden">
+      <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
         <div
-          className="h-full rounded-full bg-primary/60 transition-all duration-300"
+          className="h-full rounded-full bg-primary/70 transition-all duration-300"
           style={{ width: `${pct}%` }}
         />
       </div>
-      <span className="text-[10px] text-muted-foreground/60 w-8 text-right">
+      <span className="text-sm text-muted-foreground w-14 text-right tabular-nums">
         {score}/{max}
       </span>
     </div>

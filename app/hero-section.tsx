@@ -1,7 +1,6 @@
 import React from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { HeroHeader } from "../components/header";
 import { InfiniteSlider } from "@/components/ui/infinite-slider";
 import { ProgressiveBlur } from "@/components/ui/progressive-blur";
 import { ChevronRight } from "lucide-react";
@@ -10,7 +9,6 @@ import { FeatureIntelligenceCarousel } from "@/components/landing/FeatureIntelli
 export default function HeroSection() {
   return (
     <>
-      <HeroHeader />
       <main className="overflow-x-hidden">
         <section>
           <div className="py-24 md:pb-32 lg:pb-36 lg:pt-72">
@@ -50,14 +48,6 @@ export default function HeroSection() {
                   </Button>
                 </div>
               </div>
-            </div>
-            <div className="aspect-2/3 absolute inset-1 -z-10 overflow-hidden rounded-3xl border border-black/10 lg:aspect-video lg:rounded-[3rem] dark:border-white/5">
-              <video
-                autoPlay
-                loop
-                className="size-full object-cover opacity-50 invert dark:opacity-35 dark:invert-0 dark:lg:opacity-75"
-                src="https://ik.imagekit.io/lrigu76hy/tailark/dna-video.mp4?updatedAt=1745736251477"
-              ></video>
             </div>
           </div>
         </section>

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { reviewSchema, isAIAvailable } from "@/lib/ai";
+import { reviewSchema, isAIProviderAvailable } from "@/lib/ai/aiService";
 
 export async function POST(req: NextRequest) {
   try {
@@ -13,9 +13,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (!isAIAvailable()) {
+    if (!isAIProviderAvailable()) {
       return NextResponse.json(
-        { error: "GOOGLE_API_KEY not configured", fallback: true },
+        {
+          error:
+            "AI provider not configured. Set up either Groq (GROQ_KEY_*) or local LLM (LOCAL_LLM_URL).",
+          fallback: true,
+        },
         { status: 503 },
       );
     }

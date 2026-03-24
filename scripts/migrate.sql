@@ -80,3 +80,19 @@ CREATE OR REPLACE TRIGGER trg_users_updated_at
 
 CREATE OR REPLACE TRIGGER trg_projects_updated_at
   BEFORE UPDATE ON projects FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- ─── AI Prompt Cache ────────────────────────────────────────────────────────
+-- Stores hashed prompt → AI response pairs to avoid redundant Groq API calls.
+-- Keyed by sha256(task_type::normalized_prompt).
+CREATE TABLE IF NOT EXISTS ai_cache (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  prompt_hash   VARCHAR(64) NOT NULL,  -- sha256 hex digest
+  task_type     VARCHAR(20) NOT NULL,  -- 'generate' | 'analyze' | 'refine' | 'review'
+  response_json JSONB NOT NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+  UNIQUE (prompt_hash, task_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_cache_hash_type ON ai_cache (prompt_hash, task_type);
+CREATE INDEX IF NOT EXISTS idx_ai_cache_created ON ai_cache (created_at);

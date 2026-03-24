@@ -10,7 +10,10 @@ interface RouteParams {
 
 export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
-    const auth = authenticateRequest(req.headers.get("authorization"));
+    const auth = authenticateRequest(
+      req.headers.get("authorization"),
+      req.headers.get("cookie"),
+    );
     if (!auth) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 
 const JWT_SECRET = process.env.JWT_SECRET ?? "fallback_dev_secret";
 const SALT_ROUNDS = 10;
+export const AUTH_COOKIE_NAME = "easyschema_token";
 
 // ─── Token payload ──────────────────────────────────────────────────────────
 
@@ -41,12 +42,26 @@ export function extractToken(authHeader: string | null): string | null {
   return authHeader.slice(7);
 }
 
+export function extractTokenFromCookie(
+  cookieHeader: string | null,
+): string | null {
+  if (!cookieHeader) return null;
+  const parts = cookieHeader.split(";").map((part) => part.trim());
+  const tokenPair = parts.find((part) =>
+    part.startsWith(`${AUTH_COOKIE_NAME}=`),
+  );
+  if (!tokenPair) return null;
+  return decodeURIComponent(tokenPair.slice(`${AUTH_COOKIE_NAME}=`.length));
+}
+
 // ─── Single helper: parse + verify from request ─────────────────────────────
 
 export function authenticateRequest(
   authHeader: string | null,
+  cookieHeader?: string | null,
 ): JwtPayload | null {
-  const token = extractToken(authHeader);
+  const token =
+    extractToken(authHeader) ?? extractTokenFromCookie(cookieHeader ?? null);
   if (!token) return null;
   try {
     return verifyToken(token);

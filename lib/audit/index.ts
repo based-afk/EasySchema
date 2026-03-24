@@ -12,6 +12,10 @@ import {
   healthScoreColor,
   healthScoreBgColor,
 } from "../schema-health";
+import {
+  simulateAuditPerformance,
+  type PerformanceSimulationResult,
+} from "./performanceSimulation";
 
 import type {
   TableSchema,
@@ -27,6 +31,7 @@ export {
   healthScoreLabel,
   healthScoreColor,
   healthScoreBgColor,
+  simulateAuditPerformance,
 };
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -38,6 +43,7 @@ export interface SavedAuditResult {
   maxScore: number;
   breakdown: SchemaHealthResult["breakdown"];
   allIssues: SchemaHealthResult["allIssues"];
+  performanceSimulation?: PerformanceSimulationResult;
   createdAt: string;
 }
 
@@ -51,6 +57,11 @@ export async function runAndSaveAudit(
 ): Promise<SavedAuditResult> {
   // Compute health locally via rule engine
   const result = computeSchemaHealth(tables, relationships, indexes);
+  const performanceSimulation = simulateAuditPerformance(
+    tables,
+    relationships,
+    indexes,
+  );
 
   // Persist to DB
   const row = await queryOne<{
@@ -76,6 +87,7 @@ export async function runAndSaveAudit(
     maxScore: result.maxScore,
     breakdown: result.breakdown,
     allIssues: result.allIssues,
+    performanceSimulation,
     createdAt: row!.created_at,
   };
 }

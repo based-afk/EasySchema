@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { generateSchema, isAIAvailable } from "@/lib/ai";
+import {
+  generateSchemaFromPrompt,
+  isAIProviderAvailable,
+} from "@/lib/ai/aiService";
+import { scorePrompt } from "@/lib/scoring/ruleEngine";
 
 export async function POST(req: NextRequest) {
   try {
@@ -13,14 +17,32 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (!isAIAvailable()) {
+    // Rule engine pre-check
+    const ruleScore = scorePrompt(prompt);
+    if (ruleScore.score < 10) {
       return NextResponse.json(
-        { error: "GOOGLE_API_KEY not configured", fallback: true },
+        {
+          error: "Prompt is too vague to generate a useful schema.",
+          suggestions: ruleScore.suggestions,
+          promptScore: ruleScore.score,
+          fallback: true,
+        },
+        { status: 422 },
+      );
+    }
+
+    if (!isAIProviderAvailable()) {
+      return NextResponse.json(
+        {
+          error:
+            "AI provider not configured. Set up either Groq (GROQ_KEY_*) or local LLM (LOCAL_LLM_URL).",
+          fallback: true,
+        },
         { status: 503 },
       );
     }
 
-    const result = await generateSchema(prompt);
+    const result = await generateSchemaFromPrompt(prompt);
 
     if (!result) {
       return NextResponse.json(

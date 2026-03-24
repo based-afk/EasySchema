@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { refinePrompt, isAIAvailable } from "@/lib/ai";
+import { refinePrompt, isAIProviderAvailable } from "@/lib/ai/aiService";
+import { scorePrompt } from "@/lib/scoring/ruleEngine";
 
 export async function POST(req: NextRequest) {
   try {
@@ -13,20 +14,39 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (!isAIAvailable()) {
-      // Fallback: local improvement
+    // Always compute the rule-based score
+    const ruleScore = scorePrompt(prompt);
+
+    if (!isAIProviderAvailable()) {
+      // Fallback: local improvement + rule score
       const improved = localRefine(prompt);
-      return NextResponse.json(improved);
+      return NextResponse.json({ ...improved, ruleScore });
     }
 
     const result = await refinePrompt(prompt);
 
     if (!result) {
       const improved = localRefine(prompt);
-      return NextResponse.json(improved);
+      return NextResponse.json({ ...improved, ruleScore });
     }
 
-    return NextResponse.json(result);
+    const parsed = (result ?? {}) as {
+      improved?: string;
+      changes?: string[];
+      refinedPrompt?: string;
+      additions?: string[];
+      clarityScore?: number;
+    };
+
+    const improved = parsed.improved ?? parsed.refinedPrompt ?? prompt;
+    const changes = parsed.changes ?? parsed.additions ?? [];
+
+    return NextResponse.json({
+      ...parsed,
+      improved,
+      changes,
+      ruleScore,
+    });
   } catch (error) {
     console.error("refine-prompt error:", error);
     return NextResponse.json(localRefine(""));

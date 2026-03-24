@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { queryOne } from "@/lib/db";
-import { hashPassword, signToken } from "@/lib/utils/auth";
+import { hashPassword, signToken, AUTH_COOKIE_NAME } from "@/lib/utils/auth";
 import {
   validateEmail,
   validatePassword,
@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
     // Sign JWT
     const token = signToken({ userId: user.id, email: user.email });
 
-    return NextResponse.json(
+    const response = NextResponse.json(
       {
         token,
         user: {
@@ -70,6 +70,16 @@ export async function POST(req: NextRequest) {
       },
       { status: 201 },
     );
+
+    response.cookies.set(AUTH_COOKIE_NAME, token, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: 60 * 60 * 24 * 7,
+    });
+
+    return response;
   } catch (error) {
     console.error("Register error:", error);
     return NextResponse.json(

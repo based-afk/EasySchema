@@ -19,8 +19,8 @@ import {
 
 const menuItems = [
   { name: "Studio", href: "/Dashboard/canvas" },
-  { name: "Blueprint", href: "#" },
-  { name: "Audit", href: "#" },
+  { name: "Blueprint", href: "/Dashboard/blueprint" },
+  { name: "Audit", href: "/Dashboard/audit" },
 ];
 
 export const HeroHeader = () => {
