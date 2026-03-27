@@ -9,13 +9,16 @@ import {
   setAuthSession,
   type AuthSession,
 } from "@/lib/auth-client";
+import { getRtcDisplayNameOptional, setRtcDisplayName } from "@/lib/rtc/client";
 import Link from "next/link";
 
 export default function AccountSettingsPage() {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [displayName, setDisplayName] = useState("");
+  const [rtcDisplayName, setRtcDisplayNameState] = useState("");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [rtcSaved, setRtcSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -57,6 +60,8 @@ export default function AccountSettingsPage() {
     };
 
     void hydrate();
+    const rtcName = getRtcDisplayNameOptional();
+    if (rtcName) setRtcDisplayNameState(rtcName);
   }, []);
 
   const onSave = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -65,6 +70,7 @@ export default function AccountSettingsPage() {
 
     setSaving(true);
     setSaved(false);
+    setRtcSaved(false);
     setError(null);
 
     try {
@@ -107,6 +113,16 @@ export default function AccountSettingsPage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const onSaveRtcName = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const next = rtcDisplayName.trim();
+    if (!next) return;
+    setRtcDisplayName(next);
+    window.dispatchEvent(new CustomEvent("rtc:name", { detail: next }));
+    setRtcSaved(true);
+    setTimeout(() => setRtcSaved(false), 2000);
   };
 
   if (!session) {
@@ -167,6 +183,24 @@ export default function AccountSettingsPage() {
             </Button>
             {error && <span className="text-sm text-destructive">{error}</span>}
             {saved && <span className="text-sm text-green-600">Saved</span>}
+          </div>
+        </form>
+
+        <form onSubmit={onSaveRtcName} className="mt-8 space-y-3">
+          <div className="space-y-2">
+            <Label htmlFor="rtcDisplayName">Collaboration Name</Label>
+            <Input
+              id="rtcDisplayName"
+              value={rtcDisplayName}
+              onChange={(e) => setRtcDisplayNameState(e.target.value)}
+              placeholder="What should others see your name as?"
+            />
+          </div>
+          <div className="flex items-center gap-3">
+            <Button type="submit" variant="outline">
+              Save Collaboration Name
+            </Button>
+            {rtcSaved && <span className="text-sm text-green-600">Saved</span>}
           </div>
         </form>
       </div>

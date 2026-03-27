@@ -13,6 +13,8 @@ import {
 } from "./schema-types";
 import { computeSchemaHealth } from "./schema-health";
 import { createSchemaVersion, addVersion } from "./version-history";
+import { emitRtcEvent } from "@/lib/rtc/emitter";
+import { getRtcDisplayName } from "@/lib/rtc/client";
 
 // ─── History helpers ────────────────────────────────────────────────────────
 
@@ -51,6 +53,10 @@ export interface SchemaStore {
   // ── Schema Health ─────────────────────────────────────────────────────
   healthResult: SchemaHealthResult | null;
 
+  // ── RTC ───────────────────────────────────────────────────────────────
+  rtcMuted: boolean;
+  setRtcMuted: (value: boolean) => void;
+
   // ── Version History ───────────────────────────────────────────────────
   schemaVersions: SchemaVersion[];
 
@@ -59,28 +65,53 @@ export interface SchemaStore {
   currentPromptAnalysis: PromptAnalysis | null;
 
   // ── Table actions ─────────────────────────────────────────────────────
-  addTable: (table: TableSchema) => void;
-  deleteTable: (tableId: string) => void;
-  updateTableName: (tableId: string, name: string) => void;
+  addTable: (table: TableSchema, options?: { remote?: boolean }) => void;
+  deleteTable: (tableId: string, options?: { remote?: boolean }) => void;
+  updateTableName: (
+    tableId: string,
+    name: string,
+    options?: { remote?: boolean },
+  ) => void;
   updateTablePosition: (
     tableId: string,
     position: { x: number; y: number },
   ) => void;
-  setTables: (tables: TableSchema[]) => void;
+  setTables: (tables: TableSchema[], options?: { remote?: boolean }) => void;
+  setSchemaSnapshot: (
+    snapshot: {
+      tables: TableSchema[];
+      relationships: Relationship[];
+      indexes: Record<string, TableIndex[]>;
+    },
+    options?: { remote?: boolean },
+  ) => void;
 
   // ── Column actions ────────────────────────────────────────────────────
-  addColumn: (tableId: string, column?: Partial<Column>) => void;
-  deleteColumn: (tableId: string, columnId: string) => void;
+  addColumn: (
+    tableId: string,
+    column?: Partial<Column>,
+    options?: { remote?: boolean },
+  ) => void;
+  deleteColumn: (
+    tableId: string,
+    columnId: string,
+    options?: { remote?: boolean },
+  ) => void;
   updateColumn: (
     tableId: string,
     columnId: string,
     patch: Partial<Column>,
+    options?: { remote?: boolean },
   ) => void;
 
   // ── Relationship actions ──────────────────────────────────────────────
-  addRelationship: (rel: Relationship) => void;
-  deleteRelationship: (relId: string) => void;
-  updateRelationship: (relId: string, patch: Partial<Relationship>) => void;
+  addRelationship: (rel: Relationship, options?: { remote?: boolean }) => void;
+  deleteRelationship: (relId: string, options?: { remote?: boolean }) => void;
+  updateRelationship: (
+    relId: string,
+    patch: Partial<Relationship>,
+    options?: { remote?: boolean },
+  ) => void;
 
   // ── Index actions ─────────────────────────────────────────────────────
   addIndex: (tableId: string, index: TableIndex) => void;
@@ -127,6 +158,9 @@ export interface SchemaStore {
 // ─── Store implementation ───────────────────────────────────────────────────
 
 export const useSchemaStore = create<SchemaStore>((set, get) => {
+  let lastEditSignal = 0;
+  let editTimeout: ReturnType<typeof setTimeout> | null = null;
+
   /** Push current state onto the undo stack before mutating */
   function pushHistory() {
     const { tables, relationships, past } = get();
@@ -135,6 +169,33 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
       past: [...past.slice(-(MAX_HISTORY - 1)), snapshot],
       future: [],
     });
+  }
+
+  function shouldEmit(options?: { remote?: boolean }) {
+    return !options?.remote && !get().rtcMuted;
+  }
+
+  function signalEditing() {
+    if (typeof window === "undefined") return;
+    const now = Date.now();
+    if (now - lastEditSignal > 1000) {
+      emitRtcEvent("EDITOR_STATUS", {
+        scope: "schema",
+        isEditing: true,
+        name: getRtcDisplayName(),
+      });
+      lastEditSignal = now;
+    }
+    if (editTimeout) {
+      clearTimeout(editTimeout);
+    }
+    editTimeout = setTimeout(() => {
+      emitRtcEvent("EDITOR_STATUS", {
+        scope: "schema",
+        isEditing: false,
+        name: getRtcDisplayName(),
+      });
+    }, 2000);
   }
 
   return {
@@ -147,20 +208,26 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
     future: [],
     indexes: {},
     healthResult: null,
+    rtcMuted: false,
     schemaVersions: [],
     promptHistory: [],
     currentPromptAnalysis: null,
+    setRtcMuted: (value) => set({ rtcMuted: value }),
 
     // ── Table actions ─────────────────────────────────────────────────
-    addTable: (table) => {
-      pushHistory();
+    addTable: (table, options) => {
+      if (!options?.remote) pushHistory();
       set((s) => ({
         tables: { ...s.tables, [table.id]: table },
       }));
+      if (shouldEmit(options)) {
+        signalEditing();
+        emitRtcEvent("ADD_TABLE", { table });
+      }
     },
 
-    deleteTable: (tableId) => {
-      pushHistory();
+    deleteTable: (tableId, options) => {
+      if (!options?.remote) pushHistory();
       set((s) => {
         const { [tableId]: _, ...rest } = s.tables;
         // Also remove relationships connected to this table
@@ -179,10 +246,14 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
               : s.selection,
         };
       });
+      if (shouldEmit(options)) {
+        signalEditing();
+        emitRtcEvent("DELETE_TABLE", { tableId });
+      }
     },
 
-    updateTableName: (tableId, name) => {
-      pushHistory();
+    updateTableName: (tableId, name, options) => {
+      if (!options?.remote) pushHistory();
       set((s) => {
         const table = s.tables[tableId];
         if (!table) return s;
@@ -190,6 +261,10 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
           tables: { ...s.tables, [tableId]: { ...table, name } },
         };
       });
+      if (shouldEmit(options)) {
+        signalEditing();
+        emitRtcEvent("UPDATE_TABLE_NAME", { tableId, name });
+      }
     },
 
     updateTablePosition: (tableId, position) => {
@@ -203,8 +278,9 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
       });
     },
 
-    setTables: (tablesArr) => {
-      pushHistory();
+    setTables: (tablesArr, options) => {
+      if (!options?.remote) pushHistory();
+      const previousTables = get().tables;
       const tablesMap: Record<string, TableSchema> = {};
       for (const t of tablesArr) {
         tablesMap[t.id] = t;
@@ -236,16 +312,55 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
         }
       }
       set({ tables: tablesMap, relationships: rels });
+      if (shouldEmit(options)) {
+        signalEditing();
+        const previousIds = new Set(Object.keys(previousTables));
+        const nextIds = new Set(tablesArr.map((t) => t.id));
+
+        for (const id of previousIds) {
+          if (!nextIds.has(id)) {
+            emitRtcEvent("DELETE_TABLE", { tableId: id });
+          }
+        }
+
+        for (const table of tablesArr) {
+          emitRtcEvent("ADD_TABLE", { table });
+        }
+
+        for (const rel of Object.values(rels)) {
+          emitRtcEvent("CREATE_RELATIONSHIP", { relationship: rel });
+        }
+      }
+    },
+
+    setSchemaSnapshot: (snapshot, options) => {
+      if (!options?.remote) pushHistory();
+      const tablesMap: Record<string, TableSchema> = {};
+      for (const t of snapshot.tables) {
+        tablesMap[t.id] = t;
+      }
+      const rels: Record<string, Relationship> = {};
+      for (const rel of snapshot.relationships) {
+        rels[rel.id] = rel;
+      }
+      set({
+        tables: tablesMap,
+        relationships: rels,
+        indexes: snapshot.indexes ?? {},
+      });
     },
 
     // ── Column actions ────────────────────────────────────────────────
-    addColumn: (tableId, partial) => {
-      pushHistory();
+    addColumn: (tableId, partial, options) => {
+      if (!options?.remote) pushHistory();
+      let created: Column | null = null;
       set((s) => {
         const table = s.tables[tableId];
         if (!table) return s;
         const newCol: Column = {
-          id: `col-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          id:
+            partial?.id ??
+            `col-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           name: "new_column",
           type: "VARCHAR",
           isPrimaryKey: false,
@@ -254,6 +369,7 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
           isUnique: false,
           ...partial,
         };
+        created = newCol;
         return {
           tables: {
             ...s.tables,
@@ -261,10 +377,14 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
           },
         };
       });
+      if (shouldEmit(options) && created) {
+        signalEditing();
+        emitRtcEvent("ADD_COLUMN", { tableId, column: created });
+      }
     },
 
-    deleteColumn: (tableId, columnId) => {
-      pushHistory();
+    deleteColumn: (tableId, columnId, options) => {
+      if (!options?.remote) pushHistory();
       set((s) => {
         const table = s.tables[tableId];
         if (!table) return s;
@@ -290,10 +410,14 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
           relationships: rels,
         };
       });
+      if (shouldEmit(options)) {
+        signalEditing();
+        emitRtcEvent("DELETE_COLUMN", { tableId, columnId });
+      }
     },
 
-    updateColumn: (tableId, columnId, patch) => {
-      pushHistory();
+    updateColumn: (tableId, columnId, patch, options) => {
+      if (!options?.remote) pushHistory();
       set((s) => {
         const table = s.tables[tableId];
         if (!table) return s;
@@ -309,11 +433,15 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
           },
         };
       });
+      if (shouldEmit(options)) {
+        signalEditing();
+        emitRtcEvent("UPDATE_COLUMN", { tableId, columnId, patch });
+      }
     },
 
     // ── Relationship actions ──────────────────────────────────────────
-    addRelationship: (rel) => {
-      pushHistory();
+    addRelationship: (rel, options) => {
+      if (!options?.remote) pushHistory();
       set((s) => {
         // Also mark source column as FK
         const sourceTable = s.tables[rel.sourceTableId];
@@ -352,10 +480,14 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
           relationships: { ...s.relationships, [rel.id]: rel },
         };
       });
+      if (shouldEmit(options)) {
+        signalEditing();
+        emitRtcEvent("CREATE_RELATIONSHIP", { relationship: rel });
+      }
     },
 
-    deleteRelationship: (relId) => {
-      pushHistory();
+    deleteRelationship: (relId, options) => {
+      if (!options?.remote) pushHistory();
       set((s) => {
         const rel = s.relationships[relId];
         if (!rel) return s;
@@ -390,10 +522,14 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
               : s.selection,
         };
       });
+      if (shouldEmit(options)) {
+        signalEditing();
+        emitRtcEvent("DELETE_RELATIONSHIP", { relationshipId: relId });
+      }
     },
 
-    updateRelationship: (relId, patch) => {
-      pushHistory();
+    updateRelationship: (relId, patch, options) => {
+      if (!options?.remote) pushHistory();
       set((s) => {
         const rel = s.relationships[relId];
         if (!rel) return s;
@@ -404,6 +540,10 @@ export const useSchemaStore = create<SchemaStore>((set, get) => {
           },
         };
       });
+      if (shouldEmit(options)) {
+        signalEditing();
+        emitRtcEvent("UPDATE_RELATIONSHIP", { relationshipId: relId, patch });
+      }
     },
 
     // ── Selection ─────────────────────────────────────────────────────

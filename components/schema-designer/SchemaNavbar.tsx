@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { ExportFormat, SavedSchema } from "@/lib/schema-types";
 import { exportSchema, generateJoinTable } from "@/lib/schema-utils";
 import { importSQL } from "@/lib/sql-import";
 import { autoLayoutTables } from "@/lib/auto-layout";
 import { useSchemaStore } from "@/lib/schema-store";
+import { getRtcClient, getRtcDisplayNameOptional } from "@/lib/rtc/client";
 import {
   ArrowLeft,
   Download,
@@ -23,6 +24,7 @@ import {
   Link2,
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 
 const formatLabels: Record<ExportFormat, string> = {
   postgresql: "PostgreSQL",
@@ -33,6 +35,9 @@ const formatLabels: Record<ExportFormat, string> = {
 const STORAGE_KEY = "easyschema-saved";
 
 export function SchemaNavbar() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const currentRoom = (searchParams?.get("room") ?? "").toUpperCase();
   const tables = useSchemaStore((s) => s.tables);
   const relationships = useSchemaStore((s) => s.relationships);
   const schemaName = useSchemaStore((s) => s.schemaName);
@@ -53,12 +58,53 @@ export function SchemaNavbar() {
   const [showTools, setShowTools] = useState(false);
   const [joinA, setJoinA] = useState("");
   const [joinB, setJoinB] = useState("");
+  const [rtcConnected, setRtcConnected] = useState(false);
+  const [joinRoomCode, setJoinRoomCode] = useState("");
+  const [displayName, setDisplayName] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const sqlInputRef = useRef<HTMLInputElement>(null);
 
   const tablesArray = getTablesArray();
   const tableCount = tablesArray.length;
   const sql = exportSchema(tablesArray, exportFormat);
+
+  useEffect(() => {
+    let mounted = true;
+    let socket: ReturnType<typeof getRtcClient> | null = null;
+    const init = async () => {
+      if (typeof window === "undefined") return;
+      try {
+        await fetch("/api/socket");
+        socket = getRtcClient();
+        if (!mounted) return;
+        setRtcConnected(socket.connected);
+        socket.on("connect", () => setRtcConnected(true));
+        socket.on("disconnect", () => setRtcConnected(false));
+      } catch {
+        if (mounted) setRtcConnected(false);
+      }
+    };
+    init();
+    return () => {
+      mounted = false;
+      socket?.off("connect");
+      socket?.off("disconnect");
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setDisplayName(getRtcDisplayNameOptional());
+    const handler = (event: Event) => {
+      const custom = event as CustomEvent;
+      if (typeof custom.detail === "string") {
+        setDisplayName(custom.detail);
+      }
+    };
+    window.addEventListener("rtc:name", handler as EventListener);
+    return () =>
+      window.removeEventListener("rtc:name", handler as EventListener);
+  }, []);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(sql);
@@ -203,6 +249,20 @@ export function SchemaNavbar() {
     setJoinB("");
   }, [tables, joinA, joinB, addTable, addRelationship]);
 
+  const handleJoinRoom = useCallback(() => {
+    const nextRoom = joinRoomCode.trim();
+    if (!nextRoom) return;
+    const params = new URLSearchParams(searchParams?.toString());
+    params.set("room", nextRoom.toUpperCase());
+    router.push(`/Dashboard/canvas?${params.toString()}`);
+  }, [joinRoomCode, router, searchParams]);
+
+  const handleLeaveRoom = useCallback(() => {
+    const params = new URLSearchParams(searchParams?.toString());
+    params.delete("room");
+    router.push(`/Dashboard/canvas?${params.toString()}`);
+  }, [router, searchParams]);
+
   return (
     <>
       <nav className="h-14 w-full border-b border-border bg-background px-4 flex items-center justify-between gap-4 flex-shrink-0">
@@ -227,6 +287,31 @@ export function SchemaNavbar() {
           <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
             {tableCount} table{tableCount !== 1 ? "s" : ""}
           </span>
+          <div
+            className={`ml-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${
+              rtcConnected
+                ? "bg-emerald-500/10 text-emerald-600"
+                : "bg-amber-500/10 text-amber-600"
+            }`}
+            title={rtcConnected ? "RTC connected" : "RTC disconnected"}
+          >
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${
+                rtcConnected ? "bg-emerald-500" : "bg-amber-500"
+              }`}
+            />
+            {rtcConnected ? "Live" : "Offline"}
+          </div>
+          {currentRoom && (
+            <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">
+              Room {currentRoom}
+            </span>
+          )}
+          {displayName && (
+            <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">
+              You: {displayName}
+            </span>
+          )}
         </div>
 
         {/* Center — Undo/Redo */}
@@ -315,6 +400,35 @@ export function SchemaNavbar() {
       {showTools && (
         <div className="border-b border-border bg-card px-4 py-3 flex-shrink-0">
           <div className="flex items-center gap-6 flex-wrap">
+            {/* Join Room */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">Join Room:</span>
+              <input
+                value={joinRoomCode}
+                onChange={(e) => setJoinRoomCode(e.target.value)}
+                placeholder="ABC123"
+                className="text-xs px-2 py-1 rounded border border-border bg-muted/30 outline-none w-24"
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleJoinRoom}
+                disabled={!joinRoomCode.trim()}
+                className="text-xs"
+              >
+                Join
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleLeaveRoom}
+                disabled={!currentRoom}
+                className="text-xs"
+              >
+                Leave
+              </Button>
+            </div>
+
             {/* SQL Import */}
             <div className="flex items-center gap-2">
               <span className="text-xs text-muted-foreground">Import SQL:</span>

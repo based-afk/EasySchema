@@ -19,7 +19,7 @@ import {
 
 export { isGroqAvailable };
 
-const DEFAULT_MODEL = "llama3-70b-8192";
+const DEFAULT_MODEL = "llama-3.1-8b-instant";
 const MAX_RETRIES = 3;
 const BASE_BACKOFF_MS = 2000;
 

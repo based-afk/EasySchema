@@ -1,46 +1,44 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import {
-  calculateClarity,
-  generateSchemaFromDescription,
-} from "@/lib/schema-utils";
+import { generateSchemaFromDescription } from "@/lib/schema-utils";
 import { TableSchema } from "@/lib/schema-types";
 import { useSchemaStore } from "@/lib/schema-store";
-import {
-  analyzePromptLocal,
-  analyzePromptHybrid,
-  refinePrompt,
-  createPromptVersion,
-  generateSchemaAI,
-} from "@/lib/prompt-intelligence";
+import { generateSchemaAI } from "@/lib/prompt-intelligence";
 import { SchemaHealthPanel } from "./SchemaHealthPanel";
 import { VersionHistoryPanel } from "./VersionHistoryPanel";
-import { PromptComparisonView } from "./PromptComparisonView";
 import {
   Sparkles,
-  ChevronRight,
-  Lightbulb,
-  Layers,
-  Link2,
-  Eye,
   Check,
   X,
   Plus,
   Activity,
   History,
-  Wand2,
   Brain,
-  BarChart3,
-  RefreshCw,
-  ArrowUpRight,
 } from "lucide-react";
+import { VoiceInputButton } from "@/components/voice/VoiceInputButton";
 
 // ─── Tab types ──────────────────────────────────────────────────────────────
 
 type SidebarTab = "prompt" | "health" | "history";
+
+type ProposedTable = {
+  name: string;
+  columns: { name: string }[];
+};
+
+type ProposalSummary = {
+  addedTables: string[];
+  removedTables: string[];
+  updatedTables: Array<{
+    table: string;
+    addedColumns: string[];
+    removedColumns: string[];
+  }>;
+};
 
 const VALID_COLUMN_TYPES = new Set([
   "INT",
@@ -117,194 +115,177 @@ function findReferencedTable(colName: string, tableNames: string[]): string {
   );
 }
 
-const exampleDescriptions = [
-  "E-commerce store with users, products, orders, payments, and reviews",
-  "Blog platform with users, posts, comments, and categories",
-  "Project management tool with teams, projects, tasks, and users",
-  "Online school with students, teachers, courses, assignments",
-];
+function summarizeProposal(
+  currentTables: TableSchema[],
+  proposedTables: ProposedTable[],
+): ProposalSummary {
+  const currentMap = new Map(
+    currentTables.map((table) => [table.name.toLowerCase(), table]),
+  );
+  const proposedMap = new Map(
+    proposedTables.map((table) => [table.name.toLowerCase(), table]),
+  );
+
+  const addedTables: string[] = [];
+  const removedTables: string[] = [];
+  const updatedTables: ProposalSummary["updatedTables"] = [];
+
+  for (const [name, table] of proposedMap.entries()) {
+    if (!currentMap.has(name)) {
+      addedTables.push(table.name);
+    }
+  }
+
+  for (const [name, table] of currentMap.entries()) {
+    if (!proposedMap.has(name)) {
+      removedTables.push(table.name);
+    }
+  }
+
+  for (const [name, proposed] of proposedMap.entries()) {
+    const current = currentMap.get(name);
+    if (!current) continue;
+    const currentCols = new Set(current.columns.map((col) => col.name));
+    const proposedCols = new Set(proposed.columns.map((col) => col.name));
+    const addedColumns = Array.from(proposedCols).filter(
+      (col) => !currentCols.has(col),
+    );
+    const removedColumns = Array.from(currentCols).filter(
+      (col) => !proposedCols.has(col),
+    );
+    if (addedColumns.length > 0 || removedColumns.length > 0) {
+      updatedTables.push({
+        table: proposed.name,
+        addedColumns,
+        removedColumns,
+      });
+    }
+  }
+
+  return {
+    addedTables,
+    removedTables,
+    updatedTables,
+  };
+}
 
 // ─── Main Component ─────────────────────────────────────────────────────────
 
 export function AssistantSidebar() {
+  const searchParams = useSearchParams();
   const tables = useSchemaStore((s) => s.tables);
   const setTables = useSchemaStore((s) => s.setTables);
   const addTable = useSchemaStore((s) => s.addTable);
-  const addPromptVersion = useSchemaStore((s) => s.addPromptVersion);
-  const setPromptAnalysis = useSchemaStore((s) => s.setPromptAnalysis);
   const currentPromptAnalysis = useSchemaStore((s) => s.currentPromptAnalysis);
 
   const tablesArray = Object.values(tables);
 
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<SidebarTab>("prompt");
   const [description, setDescription] = useState("");
-  const [_clarity, setClarity] = useState({
-    score: 0,
-    suggestions: ["Start by describing what your application does."],
-    detectedEntities: [] as string[],
-    detectedRelationships: [] as string[],
-  });
   const [isGenerating, setIsGenerating] = useState(false);
-  const [isAnalyzingAI, setIsAnalyzingAI] = useState(false);
-  const [isRefining, setIsRefining] = useState(false);
-  const [breakdownModal, setBreakdownModal] = useState<"rule" | "ai" | null>(
-    null,
-  );
-  const [refineResult, setRefineResult] = useState<{
-    improved: string;
-    changes: string[];
+  const [isProposing, setIsProposing] = useState(false);
+  const [proposal, setProposal] = useState<{
+    tables: ProposedTable[];
   } | null>(null);
-
-  // ── Preview mode ──────────────────────────────────────────────────
-  const [previewTables, setPreviewTables] = useState<TableSchema[] | null>(
-    null,
-  );
-  const isPreview = previewTables !== null;
-
-  // ── Local clarity updates ─────────────────────────────────────────
-  useEffect(() => {
-    const result = calculateClarity(description);
-    setClarity(result);
-
-    // Also run local rule-based analysis
-    if (description.trim()) {
-      const analysis = analyzePromptLocal(description);
-      setPromptAnalysis(analysis);
-    }
-  }, [description, setPromptAnalysis]);
-
-  // ── Hybrid AI Analysis ────────────────────────────────────────────
-  const handleAIAnalysis = useCallback(async () => {
-    if (!description.trim()) return;
-    setIsAnalyzingAI(true);
-    try {
-      const analysis = await analyzePromptHybrid(description);
-      console.log("handleAIAnalysis result:", {
-        aiScore: analysis.aiScore,
-        combinedScore: analysis.combinedScore,
-        hasAIBreakdown: !!analysis.aiBreakdown,
-      });
-      setPromptAnalysis(analysis);
-
-      // Save prompt version
-      const version = createPromptVersion(
-        description,
-        analysis.ruleScore,
-        analysis.aiScore,
-        analysis.combinedScore,
-        false,
-      );
-      addPromptVersion(version);
-    } catch (err) {
-      console.error("handleAIAnalysis error:", err);
-      // Falls back to rule-only
-    } finally {
-      setIsAnalyzingAI(false);
-    }
-  }, [description, setPromptAnalysis, addPromptVersion]);
-
-  // ── AI Prompt Refiner ─────────────────────────────────────────────
-  const handleRefinePrompt = useCallback(async () => {
-    if (!description.trim()) return;
-    setIsRefining(true);
-    setRefineResult(null);
-    try {
-      const result = await refinePrompt(description);
-      if (!result.error) {
-        setRefineResult({ improved: result.improved, changes: result.changes });
-      }
-    } catch {
-      // silently fail
-    } finally {
-      setIsRefining(false);
-    }
-  }, [description]);
-
-  const handleAcceptRefinement = useCallback(() => {
-    if (refineResult) {
-      setDescription(refineResult.improved);
-      setRefineResult(null);
-
-      // Analyze the refined prompt and save as version
-      const analysis = analyzePromptLocal(refineResult.improved);
-      setPromptAnalysis(analysis);
-      const version = createPromptVersion(
-        refineResult.improved,
-        analysis.ruleScore,
-        analysis.aiScore,
-        analysis.combinedScore,
-        true,
-      );
-      addPromptVersion(version);
-    }
-  }, [refineResult, setPromptAnalysis, addPromptVersion]);
+  const [proposalSummary, setProposalSummary] =
+    useState<ProposalSummary | null>(null);
+  const [proposalError, setProposalError] = useState<string | null>(null);
+  const appliedBlueprintRef = useRef(false);
 
   // ── Schema Generation ─────────────────────────────────────────────
-  const handlePreview = useCallback(() => {
-    if (!description.trim()) return;
-    setIsGenerating(true);
-    setTimeout(() => {
+
+  const generateFromPrompt = useCallback(
+    async (promptText: string) => {
+      if (!promptText.trim()) return;
+      setIsGenerating(true);
       try {
-        const generated = generateSchemaFromDescription(description);
-        setPreviewTables(generated);
+        // Try AI-powered generation first
+        const aiResult = await generateSchemaAI(promptText);
+        if (!aiResult.error && aiResult.tables.length > 0) {
+          console.log(
+            "Generate: using AI result",
+            aiResult.tables.length,
+            "tables",
+          );
+          const tables = aiResultToTables(aiResult.tables);
+          setTables(tables);
+        } else {
+          // Fall back to local keyword matcher
+          console.log("Generate: falling back to local generation");
+          const generated = generateSchemaFromDescription(promptText);
+          setTables(generated);
+        }
       } catch (err) {
-        console.error("handlePreview error:", err);
+        console.error("handleGenerateDirect error:", err);
+        // Last-resort fallback
+        try {
+          const generated = generateSchemaFromDescription(promptText);
+          setTables(generated);
+        } catch (fallbackErr) {
+          console.error("Local generate also failed:", fallbackErr);
+        }
       } finally {
         setIsGenerating(false);
       }
-    }, 400);
-  }, [description]);
-
-  const handleAcceptPreview = useCallback(() => {
-    if (previewTables) {
-      setTables(previewTables);
-      setPreviewTables(null);
-    }
-  }, [previewTables, setTables]);
-
-  const handleRejectPreview = useCallback(() => {
-    setPreviewTables(null);
-  }, []);
+    },
+    [setTables],
+  );
 
   const handleGenerateDirect = useCallback(async () => {
+    await generateFromPrompt(description);
+  }, [description, generateFromPrompt]);
+
+  const handleProposeChanges = useCallback(async () => {
     if (!description.trim()) return;
-    setIsGenerating(true);
+    setIsProposing(true);
+    setProposal(null);
+    setProposalSummary(null);
+    setProposalError(null);
     try {
-      // Try AI-powered generation first
       const aiResult = await generateSchemaAI(description);
       if (!aiResult.error && aiResult.tables.length > 0) {
-        console.log(
-          "Generate: using AI result",
-          aiResult.tables.length,
-          "tables",
-        );
-        const tables = aiResultToTables(aiResult.tables);
-        setTables(tables);
+        setProposal({ tables: aiResult.tables });
+        setProposalSummary(summarizeProposal(tablesArray, aiResult.tables));
       } else {
-        // Fall back to local keyword matcher
-        console.log("Generate: falling back to local generation");
-        const generated = generateSchemaFromDescription(description);
-        setTables(generated);
+        setProposalError(
+          "AI proposal unavailable. Check your API key or AI service config.",
+        );
       }
     } catch (err) {
-      console.error("handleGenerateDirect error:", err);
-      // Last-resort fallback
-      try {
-        const generated = generateSchemaFromDescription(description);
-        setTables(generated);
-      } catch (fallbackErr) {
-        console.error("Local generate also failed:", fallbackErr);
-      }
+      console.error("handleProposeChanges error:", err);
+      setProposalError(
+        "AI proposal failed. Check your API key or retry in a moment.",
+      );
     } finally {
-      setIsGenerating(false);
+      setIsProposing(false);
     }
-  }, [description, setTables]);
+  }, [description, tablesArray]);
 
-  const handleExampleClick = (example: string) => {
-    setDescription(example);
-    setPreviewTables(null);
-    setRefineResult(null);
-  };
+  useEffect(() => {
+    if (appliedBlueprintRef.current) return;
+    const blueprintPrompt = searchParams.get("blueprintPrompt")?.trim();
+    if (!blueprintPrompt) return;
+    const room = searchParams.get("room")?.trim();
+    if (room) {
+      appliedBlueprintRef.current = true;
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("blueprintPrompt");
+      router.replace(`/Dashboard/canvas?${params.toString()}`);
+      return;
+    }
+    const hasTables = tablesArray.length > 0;
+    appliedBlueprintRef.current = true;
+    setDescription(blueprintPrompt);
+    if (!hasTables) {
+      void (async () => {
+        await generateFromPrompt(blueprintPrompt);
+        setDescription("");
+      })();
+      return;
+    }
+    setDescription("");
+  }, [generateFromPrompt, searchParams, tablesArray.length]);
 
   const handleAddTable = useCallback(() => {
     const count = tablesArray.length;
@@ -342,8 +323,6 @@ export function AssistantSidebar() {
     return "bg-red-400";
   };
 
-  const analysis = currentPromptAnalysis;
-
   return (
     <aside className="w-[300px] h-full border-r border-border bg-background flex flex-col overflow-hidden">
       {/* Header */}
@@ -355,6 +334,16 @@ export function AssistantSidebar() {
         <p className="text-xs text-muted-foreground">
           AI-assisted database design
         </p>
+        {currentPromptAnalysis && (
+          <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+            <span>Prompt score</span>
+            <span
+              className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${getScorePillColor(currentPromptAnalysis.combinedScore)}`}
+            >
+              {currentPromptAnalysis.combinedScore}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Tab bar */}
@@ -389,91 +378,27 @@ export function AssistantSidebar() {
             {/* Description Input */}
             <div className="p-4 space-y-3">
               <label className="text-xs font-medium text-muted-foreground">
-                Describe your application
+                Modify your application
               </label>
+              <p className="text-[10px] text-muted-foreground/70">
+                Describe the changes you want. Use Propose to preview changes or
+                Apply Now to apply immediately.
+              </p>
+              <VoiceInputButton
+                onTranscript={(text) =>
+                  setDescription((prev) =>
+                    prev.trim() ? `${prev} ${text}` : text,
+                  )
+                }
+              />
               <textarea
                 value={description}
                 onChange={(e) => {
                   setDescription(e.target.value);
-                  setPreviewTables(null);
-                  setRefineResult(null);
                 }}
-                placeholder="e.g., I'm building an e-commerce store with customers, products, orders, and reviews..."
+                placeholder="Describe changes or new requirements for your schema..."
                 className="w-full h-24 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-primary/50 focus:border-primary/50 placeholder:text-muted-foreground/50"
               />
-
-              {/* ── Hybrid Score Display ──────────────────────────── */}
-              {analysis && description.trim() && (
-                <div className="space-y-2">
-                  {/* Combined Score */}
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-muted-foreground">
-                      Combined Score
-                    </span>
-                    <span
-                      className={`text-xs font-bold ${getScoreColor(analysis.combinedScore)}`}
-                    >
-                      {analysis.combinedScore}/100
-                    </span>
-                  </div>
-                  <div className="w-full h-1.5 rounded-full bg-muted overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all duration-500 ${getScoreBarColor(analysis.combinedScore)}`}
-                      style={{ width: `${analysis.combinedScore}%` }}
-                    />
-                  </div>
-
-                  {/* Rule vs AI scores side-by-side */}
-                  <div className="grid grid-cols-2 gap-2">
-                    <ScoreBadge
-                      label="Rule Score"
-                      score={analysis.ruleScore}
-                      max={100}
-                    />
-                    {analysis.aiScore !== null ? (
-                      <ScoreBadge
-                        label="AI Score"
-                        score={analysis.aiScore}
-                        max={100}
-                      />
-                    ) : (
-                      <button
-                        onClick={handleAIAnalysis}
-                        disabled={isAnalyzingAI}
-                        className="flex items-center justify-center gap-1 px-2 py-1.5 rounded-md border border-dashed border-primary/40 text-[10px] text-primary hover:bg-primary/5 transition-colors disabled:opacity-50"
-                      >
-                        {isAnalyzingAI ? (
-                          <RefreshCw className="w-3 h-3 animate-spin" />
-                        ) : (
-                          <Brain className="w-3 h-3" />
-                        )}
-                        {isAnalyzingAI ? "Analyzing..." : "Get AI Score"}
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Breakdown actions */}
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setBreakdownModal("rule")}
-                      className="flex items-center justify-center gap-1 px-2 py-1.5 rounded-md border border-border text-[10px] text-foreground hover:bg-muted/40 transition-colors"
-                    >
-                      <BarChart3 className="w-3 h-3" />
-                      Score Breakdown
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setBreakdownModal("ai")}
-                      disabled={!analysis.aiBreakdown}
-                      className="flex items-center justify-center gap-1 px-2 py-1.5 rounded-md border border-border text-[10px] text-foreground hover:bg-muted/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <Brain className="w-3 h-3" />
-                      AI Breakdown
-                    </button>
-                  </div>
-                </div>
-              )}
 
               {/* Action buttons */}
               <div className="flex gap-2">
@@ -481,11 +406,20 @@ export function AssistantSidebar() {
                   size="sm"
                   variant="outline"
                   className="flex-1"
-                  onClick={handlePreview}
-                  disabled={!description.trim() || isGenerating}
+                  onClick={handleProposeChanges}
+                  disabled={!description.trim() || isProposing}
                 >
-                  <Eye className="w-4 h-4 mr-1.5" />
-                  Preview
+                  {isProposing ? (
+                    <>
+                      <Brain className="w-4 h-4 mr-1.5 animate-pulse" />
+                      Proposing...
+                    </>
+                  ) : (
+                    <>
+                      <Brain className="w-4 h-4 mr-1.5" />
+                      Propose
+                    </>
+                  )}
                 </Button>
                 <Button
                   size="sm"
@@ -496,287 +430,205 @@ export function AssistantSidebar() {
                   {isGenerating ? (
                     <>
                       <Sparkles className="w-4 h-4 mr-1.5 animate-spin" />
-                      Generating...
+                      Applying...
                     </>
                   ) : (
                     <>
                       <Sparkles className="w-4 h-4 mr-1.5" />
-                      Generate
+                      Apply Now
                     </>
                   )}
                 </Button>
               </div>
-
-              {/* ── Improve My Prompt Button ──────────────────────── */}
-              <Button
-                size="sm"
-                variant="outline"
-                className="w-full gap-1.5 border-primary/30 text-primary hover:bg-primary/5"
-                onClick={handleRefinePrompt}
-                disabled={!description.trim() || isRefining}
-              >
-                {isRefining ? (
-                  <>
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    Improving...
-                  </>
-                ) : (
-                  <>
-                    <Wand2 className="w-3.5 h-3.5" />
-                    Improve My Prompt
-                  </>
-                )}
-              </Button>
             </div>
 
-            {/* ── Refinement result ───────────────────────────────── */}
-            {refineResult && (
+            {(proposalSummary || proposalError || isProposing) && (
               <>
                 <Separator />
                 <div className="p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5">
-                      <Wand2 className="w-3.5 h-3.5 text-primary" />
+                      <Brain className="w-3.5 h-3.5 text-primary" />
                       <span className="text-xs font-medium">
-                        Improved Version
+                        AI Proposed Changes
                       </span>
                     </div>
-                    <div className="flex gap-1">
-                      <button
-                        onClick={handleAcceptRefinement}
-                        className="p-1 rounded hover:bg-green-500/20"
-                        title="Use improved prompt"
-                      >
-                        <Check className="w-3.5 h-3.5 text-green-500" />
-                      </button>
-                      <button
-                        onClick={() => setRefineResult(null)}
-                        className="p-1 rounded hover:bg-destructive/20"
-                        title="Dismiss"
-                      >
-                        <X className="w-3.5 h-3.5 text-muted-foreground" />
-                      </button>
-                    </div>
-                  </div>
-                  <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs text-foreground">
-                    {refineResult.improved}
-                  </div>
-                  {refineResult.changes.length > 0 && (
-                    <div className="space-y-1">
-                      <span className="text-[10px] text-muted-foreground font-medium">
-                        What changed:
-                      </span>
-                      {refineResult.changes.map((change, i) => (
-                        <div
-                          key={i}
-                          className="flex items-start gap-1.5 text-[10px] text-muted-foreground"
+                    {proposal && (
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => {
+                            if (!proposal) return;
+                            const tables = aiResultToTables(proposal.tables);
+                            setTables(tables);
+                            setProposal(null);
+                            setProposalSummary(null);
+                          }}
+                          className="p-1 rounded hover:bg-green-500/20"
+                          title="Apply changes"
                         >
-                          <ArrowUpRight className="w-3 h-3 mt-0.5 flex-shrink-0 text-green-500" />
-                          <span>{change}</span>
+                          <Check className="w-3.5 h-3.5 text-green-500" />
+                        </button>
+                        <button
+                          onClick={() => {
+                            setProposal(null);
+                            setProposalSummary(null);
+                          }}
+                          className="p-1 rounded hover:bg-destructive/20"
+                          title="Dismiss"
+                        >
+                          <X className="w-3.5 h-3.5 text-muted-foreground" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {proposalError && (
+                    <p className="text-xs text-destructive/80">
+                      {proposalError}
+                    </p>
+                  )}
+
+                  {proposalSummary && proposal && (
+                    <div className="space-y-3 text-xs text-muted-foreground">
+                      {proposalSummary.addedTables.length === 0 &&
+                        proposalSummary.removedTables.length === 0 &&
+                        proposalSummary.updatedTables.length === 0 && (
+                          <div>No table changes detected.</div>
+                        )}
+
+                      {proposalSummary.addedTables.length > 0 && (
+                        <div className="space-y-1">
+                          <span className="font-medium text-foreground">
+                            Added tables
+                          </span>
+                          {proposal.tables
+                            .filter((table) =>
+                              proposalSummary.addedTables.includes(table.name),
+                            )
+                            .map((table) => (
+                              <div
+                                key={`add-${table.name}`}
+                                className="rounded-lg border border-green-500/30 bg-green-500/5 px-3 py-2"
+                              >
+                                <div className="font-medium text-foreground">
+                                  {table.name}
+                                </div>
+                                <div className="mt-1 flex flex-wrap gap-1">
+                                  {table.columns.map((column) => (
+                                    <span
+                                      key={`${table.name}-${column.name}`}
+                                      className="rounded-full bg-green-500/10 px-2 py-0.5 text-[10px] text-green-500"
+                                    >
+                                      + {column.name}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
                         </div>
-                      ))}
+                      )}
+
+                      {proposalSummary.removedTables.length > 0 && (
+                        <div className="space-y-1">
+                          <span className="font-medium text-foreground">
+                            Removed tables
+                          </span>
+                          {tablesArray
+                            .filter((table) =>
+                              proposalSummary.removedTables.includes(
+                                table.name,
+                              ),
+                            )
+                            .map((table) => (
+                              <div
+                                key={`remove-${table.name}`}
+                                className="rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-2"
+                              >
+                                <div className="font-medium text-foreground">
+                                  {table.name}
+                                </div>
+                                <div className="mt-1 flex flex-wrap gap-1">
+                                  {table.columns.map((column) => (
+                                    <span
+                                      key={`${table.name}-${column.name}`}
+                                      className="rounded-full bg-red-500/10 px-2 py-0.5 text-[10px] text-red-400"
+                                    >
+                                      - {column.name}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                        </div>
+                      )}
+
+                      {proposalSummary.updatedTables.length > 0 && (
+                        <div className="space-y-1">
+                          <span className="font-medium text-foreground">
+                            Updated tables
+                          </span>
+                          {proposalSummary.updatedTables.map((update) => {
+                            const proposedTable = proposal.tables.find(
+                              (table) => table.name === update.table,
+                            );
+                            const currentTable = tablesArray.find(
+                              (table) => table.name === update.table,
+                            );
+                            if (!proposedTable || !currentTable) return null;
+                            const added = new Set(update.addedColumns);
+                            const removed = new Set(update.removedColumns);
+                            return (
+                              <div
+                                key={`update-${update.table}`}
+                                className="rounded-lg border border-border bg-muted/30 px-3 py-2"
+                              >
+                                <div className="font-medium text-foreground">
+                                  {update.table}
+                                </div>
+                                <div className="mt-1 flex flex-wrap gap-1">
+                                  {update.addedColumns.map((column) => (
+                                    <span
+                                      key={`${update.table}-${column}-add`}
+                                      className="rounded-full bg-green-500/10 px-2 py-0.5 text-[10px] text-green-500"
+                                    >
+                                      + {column}
+                                    </span>
+                                  ))}
+                                  {update.removedColumns.map((column) => (
+                                    <span
+                                      key={`${update.table}-${column}-remove`}
+                                      className="rounded-full bg-red-500/10 px-2 py-0.5 text-[10px] text-red-400"
+                                    >
+                                      - {column}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   )}
-                  <Button
-                    size="sm"
-                    className="w-full"
-                    onClick={handleAcceptRefinement}
-                  >
-                    <Check className="w-3.5 h-3.5 mr-1.5" />
-                    Use Improved Prompt
-                  </Button>
-                </div>
-              </>
-            )}
 
-            {/* ── Preview panel ───────────────────────────────────── */}
-            {isPreview && (
-              <>
-                <Separator />
-                <div className="p-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5">
-                      <Eye className="w-3.5 h-3.5 text-primary" />
-                      <span className="text-xs font-medium">
-                        Preview ({previewTables.length} tables)
-                      </span>
-                    </div>
-                    <div className="flex gap-1">
-                      <button
-                        onClick={handleAcceptPreview}
-                        className="p-1 rounded hover:bg-green-500/20"
-                        title="Accept and apply"
-                      >
-                        <Check className="w-3.5 h-3.5 text-green-500" />
-                      </button>
-                      <button
-                        onClick={handleRejectPreview}
-                        className="p-1 rounded hover:bg-destructive/20"
-                        title="Discard preview"
-                      >
-                        <X className="w-3.5 h-3.5 text-muted-foreground" />
-                      </button>
-                    </div>
-                  </div>
-                  <div className="space-y-1.5">
-                    {previewTables.map((table) => (
-                      <div
-                        key={table.id}
-                        className="px-3 py-2 rounded-lg bg-primary/5 border border-primary/20 text-xs"
-                      >
-                        <div className="font-medium text-foreground">
-                          {table.name}
-                        </div>
-                        <div className="text-muted-foreground mt-0.5">
-                          {table.columns.length} columns
-                          {table.columns
-                            .filter((c) => c.isForeignKey)
-                            .map((c) => ` · FK→${c.references?.table}`)
-                            .join("")}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="flex gap-2">
+                  {proposal && (
                     <Button
                       size="sm"
-                      className="flex-1"
-                      onClick={handleAcceptPreview}
+                      className="w-full"
+                      onClick={() => {
+                        const tables = aiResultToTables(proposal.tables);
+                        setTables(tables);
+                        setProposal(null);
+                        setProposalSummary(null);
+                      }}
                     >
                       <Check className="w-3.5 h-3.5 mr-1.5" />
-                      Apply Schema
+                      Apply Proposed Changes
                     </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={handleRejectPreview}
-                    >
-                      <X className="w-3.5 h-3.5 mr-1.5" />
-                      Discard
-                    </Button>
-                  </div>
-                </div>
-              </>
-            )}
-
-            <Separator />
-
-            {/* Suggestions (combined rule + AI) */}
-            {analysis && analysis.suggestions.length > 0 && (
-              <div className="p-4 space-y-2">
-                <div className="flex items-center gap-1.5">
-                  <Lightbulb className="w-3.5 h-3.5 text-yellow-500" />
-                  <span className="text-xs font-medium text-muted-foreground">
-                    Suggestions
-                  </span>
-                </div>
-                {analysis.suggestions.map((suggestion, i) => (
-                  <div
-                    key={i}
-                    className="flex items-start gap-2 text-xs text-muted-foreground"
-                  >
-                    <ChevronRight className="w-3 h-3 mt-0.5 flex-shrink-0 text-primary/60" />
-                    <span>{suggestion}</span>
-                  </div>
-                ))}
-                {analysis.aiSuggestions &&
-                  analysis.aiSuggestions.length > 0 && (
-                    <>
-                      <div className="flex items-center gap-1.5 mt-2">
-                        <Brain className="w-3.5 h-3.5 text-primary" />
-                        <span className="text-xs font-medium text-muted-foreground">
-                          AI Suggestions
-                        </span>
-                      </div>
-                      {analysis.aiSuggestions.map((suggestion, i) => (
-                        <div
-                          key={`ai-${i}`}
-                          className="flex items-start gap-2 text-xs text-muted-foreground"
-                        >
-                          <ChevronRight className="w-3 h-3 mt-0.5 flex-shrink-0 text-primary" />
-                          <span>{suggestion}</span>
-                        </div>
-                      ))}
-                    </>
                   )}
-              </div>
-            )}
-
-            {/* Detected Entities */}
-            {analysis && analysis.detectedEntities.length > 0 && (
-              <>
-                <Separator />
-                <div className="p-4 space-y-2">
-                  <div className="flex items-center gap-1.5">
-                    <Layers className="w-3.5 h-3.5 text-primary" />
-                    <span className="text-xs font-medium text-muted-foreground">
-                      Detected Entities ({analysis.detectedEntities.length})
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {analysis.detectedEntities.map((entity) => (
-                      <span
-                        key={entity}
-                        className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-medium"
-                      >
-                        {entity}
-                      </span>
-                    ))}
-                  </div>
                 </div>
               </>
             )}
-
-            {/* Detected Relationships */}
-            {analysis && analysis.detectedRelationships.length > 0 && (
-              <>
-                <Separator />
-                <div className="p-4 space-y-2">
-                  <div className="flex items-center gap-1.5">
-                    <Link2 className="w-3.5 h-3.5 text-blue-400" />
-                    <span className="text-xs font-medium text-muted-foreground">
-                      Detected Relationships (
-                      {analysis.detectedRelationships.length})
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {analysis.detectedRelationships.map((rel) => (
-                      <span
-                        key={rel}
-                        className="px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 text-[10px] font-medium"
-                      >
-                        {rel}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              </>
-            )}
-
-            <Separator />
-
-            {/* Prompt Comparison View */}
-            <PromptComparisonView />
-
-            <Separator />
-
-            {/* Example Descriptions */}
-            <div className="p-4 space-y-2">
-              <span className="text-xs font-medium text-muted-foreground">
-                Try an example
-              </span>
-              {exampleDescriptions.map((example, i) => (
-                <button
-                  key={i}
-                  onClick={() => handleExampleClick(example)}
-                  className="w-full text-left px-3 py-2 rounded-lg text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors border border-transparent hover:border-border"
-                >
-                  {example}
-                </button>
-              ))}
-            </div>
-
-            <Separator />
 
             {/* Current Tables */}
             <div className="p-4 space-y-2">
@@ -833,113 +685,6 @@ export function AssistantSidebar() {
           <p className="text-xs text-muted-foreground">Ready</p>
         </div>
       </div>
-
-      {analysis && breakdownModal && (
-        <div
-          className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
-          onClick={() => setBreakdownModal(null)}
-        >
-          <div
-            className="w-full max-w-lg rounded-xl border border-border bg-background shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-              <div className="flex items-center gap-2">
-                {breakdownModal === "rule" ? (
-                  <BarChart3 className="w-4 h-4 text-primary" />
-                ) : (
-                  <Brain className="w-4 h-4 text-primary" />
-                )}
-                <h3 className="text-sm font-semibold text-foreground">
-                  {breakdownModal === "rule"
-                    ? "Score Breakdown"
-                    : "AI Breakdown"}
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setBreakdownModal(null)}
-                className="p-1 rounded-md hover:bg-muted/60"
-                aria-label="Close breakdown"
-              >
-                <X className="w-4 h-4 text-muted-foreground" />
-              </button>
-            </div>
-
-            <div className="px-5 py-4 space-y-2.5 max-h-[70vh] overflow-y-auto">
-              {breakdownModal === "rule" && (
-                <>
-                  <LargeBreakdownRow
-                    label="Length"
-                    score={analysis.ruleBreakdown.length}
-                    max={15}
-                  />
-                  <LargeBreakdownRow
-                    label="Entities"
-                    score={analysis.ruleBreakdown.entities}
-                    max={30}
-                  />
-                  <LargeBreakdownRow
-                    label="Relationships"
-                    score={analysis.ruleBreakdown.relationships}
-                    max={25}
-                  />
-                  <LargeBreakdownRow
-                    label="Constraints"
-                    score={analysis.ruleBreakdown.constraints}
-                    max={15}
-                  />
-                  <LargeBreakdownRow
-                    label="Scale"
-                    score={analysis.ruleBreakdown.scale}
-                    max={8}
-                  />
-                  <LargeBreakdownRow
-                    label="Roles"
-                    score={analysis.ruleBreakdown.roles}
-                    max={7}
-                  />
-                </>
-              )}
-
-              {breakdownModal === "ai" && analysis.aiBreakdown && (
-                <>
-                  <LargeBreakdownRow
-                    label="Specificity"
-                    score={analysis.aiBreakdown.specificity}
-                    max={25}
-                  />
-                  <LargeBreakdownRow
-                    label="Rel. Clarity"
-                    score={analysis.aiBreakdown.relationshipClarity}
-                    max={25}
-                  />
-                  <LargeBreakdownRow
-                    label="Constraints"
-                    score={analysis.aiBreakdown.constraintsAndRules}
-                    max={25}
-                  />
-                  <LargeBreakdownRow
-                    label="Completeness"
-                    score={analysis.aiBreakdown.realWorldCompleteness}
-                    max={25}
-                  />
-                </>
-              )}
-            </div>
-
-            <div className="px-5 py-3 border-t border-border flex justify-end">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setBreakdownModal(null)}
-              >
-                Close
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
     </aside>
   );
 }
@@ -972,54 +717,8 @@ function TabButton({
   );
 }
 
-function ScoreBadge({
-  label,
-  score,
-  max,
-}: {
-  label: string;
-  score: number;
-  max: number;
-}) {
-  const pct = Math.round((score / max) * 100);
-  const color =
-    pct >= 70
-      ? "text-green-500"
-      : pct >= 40
-        ? "text-yellow-500"
-        : "text-red-400";
-  return (
-    <div className="flex flex-col items-center justify-center px-2 py-1.5 rounded-md border border-border bg-muted/20">
-      <span className={`text-sm font-bold ${color}`}>{score}</span>
-      <span className="text-[9px] text-muted-foreground">{label}</span>
-    </div>
-  );
-}
-
-function LargeBreakdownRow({
-  label,
-  score,
-  max,
-}: {
-  label: string;
-  score: number;
-  max: number;
-}) {
-  const pct = max > 0 ? (score / max) * 100 : 0;
-  return (
-    <div className="flex items-center gap-3">
-      <span className="text-sm text-foreground w-28 flex-shrink-0">
-        {label}
-      </span>
-      <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
-        <div
-          className="h-full rounded-full bg-primary/70 transition-all duration-300"
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-      <span className="text-sm text-muted-foreground w-14 text-right tabular-nums">
-        {score}/{max}
-      </span>
-    </div>
-  );
+function getScorePillColor(score: number) {
+  if (score >= 70) return "bg-green-500/10 text-green-500";
+  if (score >= 40) return "bg-yellow-500/10 text-yellow-500";
+  return "bg-red-500/10 text-red-500";
 }

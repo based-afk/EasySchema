@@ -478,11 +478,15 @@ export interface AIGeneratedSchema {
 export async function generateSchemaAI(
   description: string,
 ): Promise<AIGeneratedSchema> {
+  const requestTimeoutMs = 30_000;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), requestTimeoutMs);
   try {
     const res = await fetch("/api/ai/generate-schema", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ prompt: description }),
+      signal: controller.signal,
     });
 
     if (!res.ok) {
@@ -494,12 +498,21 @@ export async function generateSchemaAI(
       tables: data.tables ?? [],
       relationships: data.relationships ?? [],
     };
-  } catch {
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      return {
+        tables: [],
+        relationships: [],
+        error: "AI request timed out",
+      };
+    }
     return {
       tables: [],
       relationships: [],
       error: "Failed to connect to AI service",
     };
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 

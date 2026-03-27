@@ -12,6 +12,12 @@ import {
   healthScoreColor,
   healthScoreBgColor,
 } from "../schema-health";
+import { buildFixPlan } from "@/lib/audit/fixPlanner";
+import {
+  applyFixes,
+  applySafeFixes,
+  rollbackFix,
+} from "@/lib/audit/fixOrchestrator";
 import {
   simulateAuditPerformance,
   type PerformanceSimulationResult,
@@ -32,6 +38,10 @@ export {
   healthScoreColor,
   healthScoreBgColor,
   simulateAuditPerformance,
+  buildFixPlan,
+  applyFixes,
+  applySafeFixes,
+  rollbackFix,
 };
 
 // ─── Types ──────────────────────────────────────────────────────────────────

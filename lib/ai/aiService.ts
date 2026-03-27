@@ -14,7 +14,12 @@
 //  11. Return ReactFlow nodes + edges
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { getAIClient, isAIProviderAvailable } from "./clientFactory";
+import {
+  getAIClient,
+  getAIProvider,
+  isAIProviderAvailable,
+} from "./clientFactory";
+import { groqChatJson, isGroqAvailable } from "./groqClient";
 import type { GroqMessage } from "./groqClient";
 import { normalizePrompt } from "../utils/promptNormalizer";
 import { scorePrompt } from "../scoring/ruleEngine";
@@ -36,6 +41,24 @@ import {
 import type { ReactFlowSchema, SchemaNode, SchemaEdge } from "./types";
 
 export { isAIProviderAvailable };
+
+async function chatJsonWithFallback<T>(
+  messages: GroqMessage[],
+  options: { temperature?: number; maxTokens?: number } = {},
+): Promise<T | null> {
+  const provider = getAIProvider();
+  const primary = await getAIClient().chatJson<T>(messages, options);
+  if (primary || provider !== "local") {
+    return primary;
+  }
+
+  if (!isGroqAvailable()) {
+    return primary;
+  }
+
+  console.warn("[AI] Local provider failed; falling back to Groq.");
+  return groqChatJson<T>(messages, options);
+}
 
 // ─── Public task types ────────────────────────────────────────────────────────
 
@@ -225,9 +248,9 @@ export async function generateSchemaFromPrompt(
   ];
 
   // Step 7: AI call
-  const aiResult = await getAIClient().chatJson<GenerateResult>(messages, {
+  const aiResult = await chatJsonWithFallback<GenerateResult>(messages, {
     temperature: 0.2,
-    maxTokens: 8192,
+    maxTokens: 16384,
   });
 
   if (!aiResult || !aiResult.nodes) return null;
@@ -258,11 +281,11 @@ export async function generateSchemaFromPrompt(
       },
     ];
 
-    const correctedResult = await getAIClient().chatJson<GenerateResult>(
+    const correctedResult = await chatJsonWithFallback<GenerateResult>(
       correctionMessages,
       {
         temperature: 0.2,
-        maxTokens: 8192,
+        maxTokens: 16384,
       },
     );
 
@@ -364,7 +387,7 @@ export async function analyzeSchema(
     },
   ];
 
-  const result = await getAIClient().chatJson(messages, {
+  const result = await chatJsonWithFallback(messages, {
     temperature: 0.1,
     maxTokens: 600,
   });
@@ -387,7 +410,7 @@ export async function refinePrompt(rawPrompt: string): Promise<unknown | null> {
     },
   ];
 
-  const result = await getAIClient().chatJson(messages, {
+  const result = await chatJsonWithFallback(messages, {
     temperature: 0.4,
     maxTokens: 1024,
   });
@@ -414,7 +437,7 @@ export async function reviewSchema(
     { role: "user", content: userContent },
   ];
 
-  const result = await getAIClient().chatJson(messages, {
+  const result = await chatJsonWithFallback(messages, {
     temperature: 0.2,
     maxTokens: 2048,
   });
